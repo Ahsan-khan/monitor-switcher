@@ -17,9 +17,8 @@
 #   Icon : desktop, laptop or tv
 # Use the same list on every computer.
 $Sources = @(
-    @{ Name = "PC 1";    Port = "DisplayPort"; Code = 15; Icon = "desktop" }
-    @{ Name = "PC 2";    Port = "HDMI 1";      Code = 17; Icon = "desktop" }
-    @{ Name = "MacBook"; Port = "HDMI 2";      Code = 18; Icon = "laptop" }
+    @{ Name = "Nvidia"; Port = "DisplayPort"; Code = 15; Icon = "desktop" }
+    @{ Name = "AMD";    Port = "HDMI 1";      Code = 17; Icon = "desktop" }
 )
 
 # Which monitor to control: "Primary", or its display number ("2") if this
@@ -574,7 +573,7 @@ namespace MonitorSwitcher
         {
             activeLayer.BeginAnimation(UIElement.OpacityProperty,
                 new DoubleAnimation(on ? 1 : 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = Theme.EaseOut() });
-            label.Text = switching ? "Switching…" : Source.Name;
+            label.Text = switching ? "Switching\u2026" : Source.Name;
         }
 
         void Press(double to)
@@ -732,7 +731,7 @@ namespace MonitorSwitcher
                     {
                         Refresh();
                         Shake();
-                        App.Warn("Couldn’t reach the monitor. Is DDC/CI turned on?");
+                        App.Warn("Couldn\u2019t reach the monitor. Is DDC/CI turned on?");
                     }
                 }));
             });
