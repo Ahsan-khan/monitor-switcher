@@ -3,7 +3,7 @@
 One-click input switching for a monitor shared by several computers
 (PC 1 on DisplayPort, PC 2 on HDMI 1, MacBook on HDMI 2).
 
-## Install on Windows
+## Install or update on Windows
 
 Open PowerShell and run:
 
@@ -11,8 +11,10 @@ Open PowerShell and run:
 $f="$env:TEMP\ms.ps1"; irm https://raw.githubusercontent.com/Ahsan-khan/monitor-switcher/main/setup-monitor-switcher-windows.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
-Then press Ctrl+Alt+M (or click the tray icon) to switch.
-Ctrl+Alt+1 / 2 / 3 switch straight to PC 1 / PC 2 / MacBook.
+- A small widget sits on your desktop: click a computer to switch to it.
+  Drag it anywhere; right-click it for options. It hides while a game or video is fullscreen.
+- Ctrl+Alt+1 / 2 / 3 switch straight to PC 1 / PC 2 / MacBook.
+- Ctrl+Alt+M (or the tray icon) opens the big switcher panel.
 
 ## Install on the MacBook
 
