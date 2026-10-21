@@ -60,6 +60,7 @@ $AppSource = @'
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
@@ -235,9 +236,88 @@ namespace MonitorSwitcher
         [DllImport("user32.dll")]
         public static extern int SetWindowLong(IntPtr hWnd, int index, int value);
 
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern int GetClassName(IntPtr hWnd, StringBuilder name, int maxCount);
+        [DllImport("user32.dll")]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+        [DllImport("user32.dll")]
+        public static extern IntPtr MonitorFromWindow(IntPtr hWnd, uint flags);
+        [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW")]
+        public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT { public int Left, Top, Right, Bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MONITORINFO
+        {
+            public int cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+        }
+
         public const int WM_HOTKEY = 0x0312;
         public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
-        public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80;
+        public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
+        public const uint MONITOR_DEFAULTTONEAREST = 2;
+    }
+
+    // ------------------------------------------------------------ settings
+    static class Settings
+    {
+        static readonly string FilePath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MonitorSwitcher", "settings.ini");
+
+        public static bool WidgetVisible = true;
+        public static bool WidgetOnTop = true;
+        public static double WidgetLeft = double.NaN;
+        public static double WidgetTop = double.NaN;
+
+        public static void Load()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(FilePath)) return;
+                foreach (string line in System.IO.File.ReadAllLines(FilePath))
+                {
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string key = line.Substring(0, eq).Trim();
+                    string value = line.Substring(eq + 1).Trim();
+                    double number;
+                    bool isNumber = double.TryParse(value, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out number);
+                    if (key == "WidgetVisible") WidgetVisible = value == "1";
+                    else if (key == "WidgetOnTop") WidgetOnTop = value == "1";
+                    else if (key == "WidgetLeft" && isNumber) WidgetLeft = number;
+                    else if (key == "WidgetTop" && isNumber) WidgetTop = number;
+                }
+            }
+            catch (Exception) { }
+        }
+
+        public static void Save()
+        {
+            try
+            {
+                System.Globalization.CultureInfo inv = System.Globalization.CultureInfo.InvariantCulture;
+                System.IO.File.WriteAllLines(FilePath, new string[]
+                {
+                    "WidgetVisible=" + (WidgetVisible ? "1" : "0"),
+                    "WidgetOnTop=" + (WidgetOnTop ? "1" : "0"),
+                    "WidgetLeft=" + WidgetLeft.ToString("R", inv),
+                    "WidgetTop=" + WidgetTop.ToString("R", inv)
+                });
+            }
+            catch (Exception) { }
+        }
     }
 
     // ------------------------------------------------------------ look
@@ -323,7 +403,7 @@ namespace MonitorSwitcher
                 VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center,
                 Margin = new Thickness(0, 10, 0, 0)
             };
-            stack.Children.Add(MakeIcon(source.Icon));
+            stack.Children.Add(MakeIcon(source.Icon, 34));
             stack.Children.Add(new TextBlock
             {
                 Text = source.Name, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
@@ -381,7 +461,7 @@ namespace MonitorSwitcher
             }
         }
 
-        static void Fade(SolidColorBrush brush, Color to)
+        internal static void Fade(SolidColorBrush brush, Color to)
         {
             brush.BeginAnimation(SolidColorBrush.ColorProperty,
                 new ColorAnimation(to, TimeSpan.FromMilliseconds(140)) { EasingFunction = Theme.EaseOut() });
@@ -397,7 +477,7 @@ namespace MonitorSwitcher
             scale.BeginAnimation(ScaleTransform.ScaleYProperty, a);
         }
 
-        static FrameworkElement MakeIcon(string kind)
+        internal static FrameworkElement MakeIcon(string kind, double size)
         {
             string data;
             switch ((kind ?? "").ToLowerInvariant())
@@ -419,8 +499,274 @@ namespace MonitorSwitcher
             };
             Canvas canvas = new Canvas { Width = 24, Height = 24 };
             canvas.Children.Add(path);
-            return new Viewbox { Width = 34, Height = 34, Child = canvas, HorizontalAlignment = HorizontalAlignment.Center };
+            return new Viewbox { Width = size, Height = size, Child = canvas, HorizontalAlignment = HorizontalAlignment.Center };
         }
+    }
+
+    // ------------------------------------------------------------ desktop widget
+    class MiniTile
+    {
+        public readonly Source Source;
+        public readonly Grid Root;
+        public event Action<MiniTile> Clicked;
+
+        static readonly Color Idle = Color.FromArgb(0x00, 255, 255, 255);
+        static readonly Color Hover = Color.FromArgb(0x1C, 255, 255, 255);
+
+        readonly SolidColorBrush fill = new SolidColorBrush(Idle);
+        readonly ScaleTransform scale = new ScaleTransform(1, 1);
+        readonly Border activeLayer;
+        readonly TextBlock label;
+        bool pressed;
+
+        public MiniTile(Source source)
+        {
+            Source = source;
+            Root = new Grid
+            {
+                Width = 80, Height = 54, Cursor = Cursors.Hand, Background = Brushes.Transparent,
+                RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5)
+            };
+            Root.Children.Add(new Border { CornerRadius = new CornerRadius(14), Background = fill });
+
+            activeLayer = new Border
+            {
+                CornerRadius = new CornerRadius(14), Background = Theme.Accent, Opacity = 0,
+                BorderBrush = Theme.White(0x40), BorderThickness = new Thickness(1),
+                Effect = new DropShadowEffect { Color = Theme.Glow, BlurRadius = 18, ShadowDepth = 0, Opacity = 0.55 }
+            };
+            Root.Children.Add(activeLayer);
+
+            StackPanel stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
+            stack.Children.Add(Tile.MakeIcon(source.Icon, 20));
+            label = new TextBlock
+            {
+                Text = source.Name, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
+                HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0),
+                MaxWidth = 74, TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            stack.Children.Add(label);
+            Root.Children.Add(stack);
+
+            Root.MouseEnter += delegate { Tile.Fade(fill, Hover); };
+            Root.MouseLeave += delegate
+            {
+                pressed = false;
+                Tile.Fade(fill, Idle);
+                Press(1.0);
+            };
+            Root.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                pressed = true;
+                Press(0.93);
+                e.Handled = true;
+            };
+            Root.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
+            {
+                Press(1.0);
+                if (pressed && Clicked != null) Clicked(this);
+                pressed = false;
+                e.Handled = true;
+            };
+        }
+
+        public void SetState(bool on, bool switching)
+        {
+            activeLayer.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(on ? 1 : 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = Theme.EaseOut() });
+            label.Text = switching ? "Switching…" : Source.Name;
+        }
+
+        void Press(double to)
+        {
+            DoubleAnimation a = new DoubleAnimation(to, TimeSpan.FromMilliseconds(to < 1 ? 70 : 180))
+            {
+                EasingFunction = to < 1 ? Theme.EaseOut() : new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.4 }
+            };
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, a);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, a);
+        }
+    }
+
+    class WidgetWindow : Window
+    {
+        readonly List<MiniTile> tiles = new List<MiniTile>();
+        readonly TranslateTransform shift = new TranslateTransform();
+        bool busy;
+        bool placed;
+        public IntPtr Handle;
+
+        public WidgetWindow()
+        {
+            WindowStyle = WindowStyle.None;
+            AllowsTransparency = true;
+            Background = Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
+            ShowInTaskbar = false;
+            ShowActivated = false;
+            Topmost = Settings.WidgetOnTop;
+            SizeToContent = SizeToContent.WidthAndHeight;
+            Title = "Monitor Switcher widget";
+            FontFamily = new FontFamily("Segoe UI");
+            UseLayoutRounding = true;
+            TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+
+            Grid shell = new Grid { Margin = new Thickness(18), RenderTransform = shift };
+            shell.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(20), Background = new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x13)),
+                Effect = new DropShadowEffect { BlurRadius = 28, ShadowDepth = 8, Direction = 270, Opacity = 0.5, Color = Colors.Black }
+            });
+            Border card = new Border
+            {
+                CornerRadius = new CornerRadius(20),
+                Background = new LinearGradientBrush(Color.FromRgb(0x24, 0x24, 0x2A), Color.FromRgb(0x16, 0x16, 0x1A), 90),
+                BorderBrush = Theme.White(0x24), BorderThickness = new Thickness(1),
+                Padding = new Thickness(4, 6, 6, 6)
+            };
+            shell.Children.Add(card);
+
+            StackPanel row = new StackPanel { Orientation = Orientation.Horizontal };
+            card.Child = row;
+
+            // Grip: drag the widget anywhere (the empty space around the buttons works too).
+            Grid grip = new Grid { Width = 18, Cursor = Cursors.SizeAll, Background = Brushes.Transparent };
+            Canvas dots = new Canvas { Width = 8, Height = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            for (int r = 0; r < 3; r++)
+            {
+                for (int c = 0; c < 2; c++)
+                {
+                    Shapes.Ellipse dot = new Shapes.Ellipse { Width = 2.6, Height = 2.6, Fill = Theme.White(0x66) };
+                    Canvas.SetLeft(dot, c * 5);
+                    Canvas.SetTop(dot, r * 5.5);
+                    dots.Children.Add(dot);
+                }
+            }
+            grip.Children.Add(dots);
+            row.Children.Add(grip);
+
+            for (int i = 0; i < Config.Sources.Length; i++)
+            {
+                MiniTile tile = new MiniTile(Config.Sources[i]);
+                if (i > 0) tile.Root.Margin = new Thickness(4, 0, 0, 0);
+                tile.Clicked += OnClicked;
+                tiles.Add(tile);
+                row.Children.Add(tile.Root);
+            }
+
+            Content = shell;
+
+            shell.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
+            {
+                try { DragMove(); } catch (InvalidOperationException) { }
+                Settings.WidgetLeft = Left;
+                Settings.WidgetTop = Top;
+                Settings.Save();
+            };
+            shell.MouseRightButtonUp += delegate(object s, MouseButtonEventArgs e)
+            {
+                App.ShowMenuAtCursor();
+                e.Handled = true;
+            };
+        }
+
+        public void InitHandle()
+        {
+            Handle = new WindowInteropHelper(this).EnsureHandle();
+            int ex = Native.GetWindowLong(Handle, Native.GWL_EXSTYLE);
+            Native.SetWindowLong(Handle, Native.GWL_EXSTYLE, ex | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE);
+        }
+
+        public void ShowWidget()
+        {
+            if (!placed) { Place(); placed = true; }
+            Refresh();
+            Show();
+        }
+
+        // Use the saved spot if it's still on a screen, otherwise the bottom-right corner.
+        public void Place()
+        {
+            FrameworkElement content = (FrameworkElement)Content;
+            content.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Size size = content.DesiredSize;
+            double x = Settings.WidgetLeft, y = Settings.WidgetTop;
+            double vl = SystemParameters.VirtualScreenLeft, vt = SystemParameters.VirtualScreenTop;
+            double vr = vl + SystemParameters.VirtualScreenWidth, vb = vt + SystemParameters.VirtualScreenHeight;
+            bool fits = !double.IsNaN(x) && !double.IsNaN(y)
+                && x >= vl - 24 && y >= vt - 24 && x + size.Width <= vr + 24 && y + size.Height <= vb + 24;
+            if (!fits)
+            {
+                Rect area = SystemParameters.WorkArea;
+                x = area.Right - size.Width + 6;
+                y = area.Bottom - size.Height + 6;
+            }
+            Left = x;
+            Top = y;
+        }
+
+        public void Refresh()
+        {
+            if (busy) return;
+            foreach (MiniTile t in tiles) t.SetState(t.Source.Code == App.LastInput, false);
+        }
+
+        void OnClicked(MiniTile tile)
+        {
+            if (busy) return;
+            busy = true;
+            foreach (MiniTile t in tiles) t.SetState(t == tile, t == tile);
+            int code = tile.Source.Code;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool ok = Ddc.SetInput(code);
+                Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    busy = false;
+                    if (ok)
+                    {
+                        App.LastInput = code;
+                        App.InputChanged();
+                    }
+                    else
+                    {
+                        Refresh();
+                        Shake();
+                        App.Warn("Couldn’t reach the monitor. Is DDC/CI turned on?");
+                    }
+                }));
+            });
+        }
+
+        void Shake()
+        {
+            DoubleAnimationUsingKeyFrames k = new DoubleAnimationUsingKeyFrames();
+            double[] xs = { -6, 5, -4, 2, -1, 0 };
+            for (int i = 0; i < xs.Length; i++)
+                k.KeyFrames.Add(new EasingDoubleKeyFrame(xs[i], KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(55 * (i + 1)))));
+            shift.BeginAnimation(TranslateTransform.XProperty, k);
+        }
+    }
+
+    class DarkMenuColors : Forms.ProfessionalColorTable
+    {
+        static readonly Drawing.Color Back = Drawing.Color.FromArgb(32, 32, 38);
+        static readonly Drawing.Color Hot = Drawing.Color.FromArgb(54, 54, 64);
+        static readonly Drawing.Color Line = Drawing.Color.FromArgb(62, 62, 72);
+        static readonly Drawing.Color Accent = Drawing.Color.FromArgb(99, 102, 241);
+
+        public override Drawing.Color ToolStripDropDownBackground { get { return Back; } }
+        public override Drawing.Color ImageMarginGradientBegin { get { return Back; } }
+        public override Drawing.Color ImageMarginGradientMiddle { get { return Back; } }
+        public override Drawing.Color ImageMarginGradientEnd { get { return Back; } }
+        public override Drawing.Color MenuBorder { get { return Line; } }
+        public override Drawing.Color MenuItemBorder { get { return Hot; } }
+        public override Drawing.Color MenuItemSelected { get { return Hot; } }
+        public override Drawing.Color SeparatorDark { get { return Line; } }
+        public override Drawing.Color SeparatorLight { get { return Back; } }
+        public override Drawing.Color CheckBackground { get { return Accent; } }
+        public override Drawing.Color CheckSelectedBackground { get { return Accent; } }
+        public override Drawing.Color CheckPressedBackground { get { return Accent; } }
     }
 
     class SwitcherWindow : Window
@@ -615,7 +961,7 @@ namespace MonitorSwitcher
                 Dispatcher.BeginInvoke(new Action(delegate
                 {
                     if (value >= 0) App.LastInput = value;
-                    if (!busy) UpdateTiles(-1);
+                    App.InputChanged();
                 }));
             });
         }
@@ -639,6 +985,7 @@ namespace MonitorSwitcher
                     {
                         App.LastInput = source.Code;
                         UpdateTiles(-1);
+                        App.InputChanged();
                         After(280, delegate { busy = false; HidePanel(); });
                     }
                     else
@@ -674,8 +1021,11 @@ namespace MonitorSwitcher
     {
         public static int LastInput = -1;
         static SwitcherWindow window;
+        static WidgetWindow widget;
         static Forms.NotifyIcon tray;
         static Mutex instance;
+        static bool polling;
+        static readonly uint OwnPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
         const string InstanceName = "Local\\MonitorSwitcher.Instance";
         const string ShowSignalName = "Local\\MonitorSwitcher.Show";
         const int ToggleHotkeyId = 1;
@@ -712,10 +1062,13 @@ namespace MonitorSwitcher
             }
 
             EventWaitHandle showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSignalName);
+            Settings.Load();
             Application app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             window = new SwitcherWindow();
             IntPtr hwnd = window.InitHandle();
             HwndSource.FromHwnd(hwnd).AddHook(WndProc);
+            widget = new WidgetWindow();
+            widget.InitHandle();
 
             SetupTray();
             string taken = RegisterHotkeys(hwnd);
@@ -737,9 +1090,18 @@ namespace MonitorSwitcher
             ThreadPool.QueueUserWorkItem(delegate
             {
                 int value = Ddc.GetInput();
-                if (value >= 0) LastInput = value;
+                app.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    if (value >= 0) LastInput = value;
+                    InputChanged();
+                }));
             });
 
+            app.Startup += delegate
+            {
+                if (Settings.WidgetVisible) widget.ShowWidget();
+                StartTimers();
+            };
             if (verb == "show") app.Startup += delegate { window.ShowPanel(); };
             app.Exit += delegate { tray.Visible = false; tray.Dispose(); };
             app.Run();
@@ -782,8 +1144,93 @@ namespace MonitorSwitcher
                 bool ok = Ddc.SetInput(source.Code);
                 window.Dispatcher.BeginInvoke(new Action(delegate
                 {
-                    if (ok) { LastInput = source.Code; window.Refresh(); }
-                    else tray.ShowBalloonTip(4000, "Monitor Switcher", "Couldn\u2019t reach the monitor. Is DDC/CI turned on?", Forms.ToolTipIcon.Warning);
+                    if (ok) { LastInput = source.Code; InputChanged(); }
+                    else Warn("Couldn\u2019t reach the monitor. Is DDC/CI turned on?");
+                }));
+            });
+        }
+
+        public static void InputChanged()
+        {
+            if (window != null) window.Refresh();
+            if (widget != null) widget.Refresh();
+        }
+
+        public static void Warn(string text)
+        {
+            tray.ShowBalloonTip(4000, "Monitor Switcher", text, Forms.ToolTipIcon.Warning);
+        }
+
+        public static void ShowMenuAtCursor()
+        {
+            Forms.ContextMenuStrip menu = tray.ContextMenuStrip;
+            menu.Show(Forms.Cursor.Position);
+            Native.SetForegroundWindow(menu.Handle);
+        }
+
+        static void StartTimers()
+        {
+            // Hide the widget while a game or video is fullscreen on its screen.
+            DispatcherTimer guard = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            guard.Tick += delegate { UpdateWidgetVisibility(); };
+            guard.Start();
+
+            // Keep the highlight right when another computer switches the monitor.
+            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            poll.Tick += delegate { PollInput(); };
+            poll.Start();
+
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += delegate
+            {
+                widget.Dispatcher.BeginInvoke(new Action(delegate { widget.Place(); }));
+            };
+        }
+
+        static void UpdateWidgetVisibility()
+        {
+            if (!Settings.WidgetVisible) return;
+            bool covered = FullscreenAppOnWidgetScreen();
+            if (covered && widget.IsVisible) widget.Hide();
+            else if (!covered && !widget.IsVisible) widget.ShowWidget();
+        }
+
+        static bool FullscreenAppOnWidgetScreen()
+        {
+            IntPtr fg = Native.GetForegroundWindow();
+            if (fg == IntPtr.Zero) return false;
+            uint pid;
+            Native.GetWindowThreadProcessId(fg, out pid);
+            if (pid == OwnPid) return false;
+            StringBuilder cls = new StringBuilder(256);
+            Native.GetClassName(fg, cls, cls.Capacity);
+            string name = cls.ToString();
+            if (name == "Progman" || name == "WorkerW" || name == "Shell_TrayWnd" || name == "Shell_SecondaryTrayWnd") return false;
+            Native.RECT r;
+            if (!Native.GetWindowRect(fg, out r)) return false;
+            IntPtr monitor = Native.MonitorFromWindow(fg, Native.MONITOR_DEFAULTTONEAREST);
+            if (monitor != Native.MonitorFromWindow(widget.Handle, Native.MONITOR_DEFAULTTONEAREST)) return false;
+            Native.MONITORINFO info = new Native.MONITORINFO();
+            info.cbSize = Marshal.SizeOf(typeof(Native.MONITORINFO));
+            if (!Native.GetMonitorInfo(monitor, ref info)) return false;
+            return r.Left <= info.rcMonitor.Left && r.Top <= info.rcMonitor.Top
+                && r.Right >= info.rcMonitor.Right && r.Bottom >= info.rcMonitor.Bottom;
+        }
+
+        static void PollInput()
+        {
+            if (polling || !widget.IsVisible) return;
+            polling = true;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                int value = Ddc.GetInput();
+                widget.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    polling = false;
+                    if (value >= 0 && value != LastInput)
+                    {
+                        LastInput = value;
+                        InputChanged();
+                    }
                 }));
             });
         }
@@ -798,7 +1245,29 @@ namespace MonitorSwitcher
                 if (e.Button == Forms.MouseButtons.Left) window.Toggle();
             };
             Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
+            menu.Renderer = new Forms.ToolStripProfessionalRenderer(new DarkMenuColors()) { RoundedEdges = false };
+            menu.BackColor = Drawing.Color.FromArgb(32, 32, 38);
+            menu.ForeColor = Drawing.Color.White;
+            menu.Font = new Drawing.Font("Segoe UI", 9.5f);
             menu.Items.Add("Open switcher", null, delegate { window.ShowPanel(); });
+
+            Forms.ToolStripMenuItem widgetItem = new Forms.ToolStripMenuItem("Show desktop widget") { CheckOnClick = true, Checked = Settings.WidgetVisible };
+            widgetItem.CheckedChanged += delegate
+            {
+                Settings.WidgetVisible = widgetItem.Checked;
+                Settings.Save();
+                if (Settings.WidgetVisible) widget.ShowWidget();
+                else widget.Hide();
+            };
+            Forms.ToolStripMenuItem onTopItem = new Forms.ToolStripMenuItem("Keep widget on top") { CheckOnClick = true, Checked = Settings.WidgetOnTop };
+            onTopItem.CheckedChanged += delegate
+            {
+                Settings.WidgetOnTop = onTopItem.Checked;
+                Settings.Save();
+                widget.Topmost = Settings.WidgetOnTop;
+            };
+            menu.Items.Add(widgetItem);
+            menu.Items.Add(onTopItem);
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("Quit", null, delegate { Application.Current.Shutdown(); });
             tray.ContextMenuStrip = menu;
@@ -977,6 +1446,8 @@ if ($DirectHotkeys) {
         Write-Host ("  Ctrl+Alt+{0}        switch to {1}" -f ($i + 1), $Sources[$i].Name)
     }
 }
+Write-Host "  The desktop widget sits in the bottom-right corner: click a computer to switch,"
+Write-Host "  drag it anywhere, right-click it for options."
 Write-Host "  It starts by itself when you sign in. There's also a desktop icon."
 if ($here) {
     Write-Host "`nThe monitor is showing input $($probe.ExitCode), so this computer is '$($here.Name)'."
