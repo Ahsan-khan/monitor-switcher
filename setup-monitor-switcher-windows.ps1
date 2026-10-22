@@ -1175,13 +1175,16 @@ namespace MonitorSwitcher
             guard.Start();
 
             // Keep the highlight right when another computer switches the monitor.
-            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            // A DDC read takes a few dozen milliseconds, so once a second is cheap.
+            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             poll.Tick += delegate { PollInput(); };
             poll.Start();
 
+            // Windows reports a display change when the monitor switches to or away
+            // from this PC, so check right away instead of waiting for the next tick.
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged += delegate
             {
-                widget.Dispatcher.BeginInvoke(new Action(delegate { widget.Place(); }));
+                widget.Dispatcher.BeginInvoke(new Action(delegate { widget.Place(); PollInput(); }));
             };
         }
 
@@ -1190,7 +1193,7 @@ namespace MonitorSwitcher
             if (!Settings.WidgetVisible) return;
             bool covered = FullscreenAppOnWidgetScreen();
             if (covered && widget.IsVisible) widget.Hide();
-            else if (!covered && !widget.IsVisible) widget.ShowWidget();
+            else if (!covered && !widget.IsVisible) { widget.ShowWidget(); PollInput(); }
         }
 
         static bool FullscreenAppOnWidgetScreen()
