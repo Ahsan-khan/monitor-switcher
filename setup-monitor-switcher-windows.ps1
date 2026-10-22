@@ -1175,8 +1175,8 @@ namespace MonitorSwitcher
             guard.Start();
 
             // Keep the highlight right when another computer switches the monitor.
-            // A DDC read takes a few dozen milliseconds, so once a second is cheap.
-            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            // A DDC read takes a few dozen milliseconds, so every couple of seconds is cheap.
+            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
             poll.Tick += delegate { PollInput(); };
             poll.Start();
 
