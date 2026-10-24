@@ -4,14 +4,14 @@
 **Monitor Switcher** gives one-click input switching for a monitor shared by two Windows PCs. Each PC runs a small tray app with a widget **in the taskbar** that shows **both PCs' CPU, GPU and RAM use**. Click the other PC's tile (or press Ctrl+Alt+1 / 2) and the monitor changes input. Switching goes straight to the monitor over the video cable (DDC/CI). The usage numbers travel between the PCs over the home network. There's no extra hardware or third-party tool.
 
 ## Goal (from the README, the commits and the owner's requests)
-"One-click input switching for a monitor shared by two Windows PCs (Nvidia on DisplayPort, AMD on HDMI 1)." The setup script adds: jump straight to a source with a hotkey "even when the monitor is showing another computer". Later commits made the widget always visible, and quick to update "when the other PC switches". On 2026-10-23 the owner asked: "show ram, gpu and cpu usage for both" and "put the widget in the task bar". The chats from sessions 1–2 aren't on this PC.
+"One-click input switching for a monitor shared by two Windows PCs (Nvidia on DisplayPort, AMD on HDMI 1)." The setup script adds: jump straight to a source with a hotkey "even when the monitor is showing another computer". Later commits made the widget always visible, and quick to update "when the other PC switches". On 2026-10-23 the owner asked: "show ram, gpu and cpu usage for both" and "put the widget in the task bar". Later that day (session 4): "i keep forgetting what pc I am on, make it more prominient some how" (D22). The chats from sessions 1–2 aren't on this PC.
 
 ## Setup and scope (from the code and history)
 | Topic | Answer |
 |---|---|
 | Monitor | **Samsung Odyssey G91F**, shared by both PCs |
-| Nvidia PC | DisplayPort → input code **15** |
-| AMD PC | HDMI 1 → input code **17**. Radeon RX 5700 XT. The local checkout and the session 3 work are on this PC |
+| Nvidia PC | DisplayPort → input code **15**. Color green `#76B900` |
+| AMD PC | HDMI 1 → input code **17**. Radeon RX 5700 XT. Color maroon `#8E1622`. The local checkout and the session 3–4 work are on this PC |
 | MacBook | Was on HDMI 2 (code 18) in the first version. **Dropped on 2026-10-21**, along with the Mac script |
 | Before this app | NirSoft ControlMyMonitor, run from "Switch to ..." desktop shortcuts. The setup deletes those |
 | Platform | Windows only: Windows PowerShell 5.1 + .NET Framework, both built into Windows |
@@ -36,5 +36,6 @@
 - Product name **Monitor Switcher**. Exe `MonitorSwitcher.exe`, C# namespace `MonitorSwitcher`, folder `%LOCALAPPDATA%\MonitorSwitcher`, shortcuts `Monitor Switcher.lnk`.
 - Single-instance names: mutex `Local\MonitorSwitcher.Instance`, event `Local\MonitorSwitcher.Show`.
 - The taskbar widget's window title: `Monitor Switcher taskbar widget` (a child of `Shell_TrayWnd`).
+- The "You're on" card's window title: `Monitor Switcher: this PC` (top-level, click-through, made on first use).
 - Network: UDP port **47815**; messages start with `MSW1|`.
 - The PCs are called **Nvidia** and **AMD** in the UI (renamed from "PC 1" / "PC 2" on 2026-10-21).

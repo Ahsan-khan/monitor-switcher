@@ -9,7 +9,7 @@ This folder holds everything a new AI session needs to keep building Monitor Swi
 | 3 | `03_architecture/architecture.md` | How it fits together, plus a code map with line numbers |
 | 4 | `03_architecture/taskbar_and_usage.md` | The taskbar widget, the CPU / GPU / RAM readings, the PC-to-PC link, and how each PC knows which one it is |
 | 5 | `03_architecture/ddc_ci.md` | How the monitor gets switched (DDC/CI), input codes, how to find them |
-| 6 | `02_decisions/decisions.md` | Every major choice and why (D1–D21). Don't re-litigate without reason |
+| 6 | `02_decisions/decisions.md` | Every major choice and why (D1–D22). Don't re-litigate without reason |
 | 7 | `05_known_issues/issues.md` | Limits, behaviors, untested areas, gotchas |
 | 8 | `06_roadmap/roadmap.md` | What's next (ideas; check with the owner) |
 | 9 | `07_dev_environment/environment.md` | This PC, **install, compile-check and test commands** |

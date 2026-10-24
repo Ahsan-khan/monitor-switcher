@@ -1,4 +1,4 @@
-# Dev environment (the AMD PC, as of 2026-10-23)
+# Dev environment (the AMD PC, as of 2026-10-23, session 4)
 
 | Tool | Status |
 |---|---|
@@ -53,7 +53,7 @@ $params.ReferencedAssemblies.AddRange([string[]]@("System.dll", "System.Core.dll
 $result = (New-Object Microsoft.CSharp.CSharpCodeProvider).CompileAssemblyFromSource($params, $src)
 if ($result.Errors.HasErrors) { $result.Errors | Where-Object { -not $_.IsWarning } | ForEach-Object { "C# line $($_.Line) = script line $($_.Line + $app.Extent.StartLineNumber): $($_.ErrorText)" } } else { "Build OK" }
 ```
-It prints `Build OK`, or each error with its C# line and the matching script line. Delete `%TEMP%\MonitorSwitcher-check.exe` afterwards if you like.
+It prints `Build OK`, or each error with its C# line and the matching script line. Delete `%TEMP%\MonitorSwitcher-check.exe` afterwards if you like. The sample sources use the 4-argument `Source` (no color), which still compiles; the setup passes a fifth argument, the color.
 
 ## Testing patterns that worked
 - **Compile check** (above) after every change to the script. It takes a few seconds.
@@ -71,7 +71,11 @@ It prints `Build OK`, or each error with its C# line and the matching script lin
   $udp.Close()
   ```
 - **Desktop mode:** stop the app, set `WidgetMode=desktop` in settings.ini, start `MonitorSwitcher.exe` with no arguments, look, then set it back to `taskbar` and restart.
-- **On the AMD PC:** compile check → install from the checkout → look at the taskbar → the owner tries switching by hand. Don't switch inputs yourself.
+- **Offscreen previews (session 4):** to see a design without putting anything on the owner's screen, compile the app's C# plus one extra .cs file that has its own `[STAThread] Main`, with `/main:MonitorSwitcher.Preview` added to the compiler options (the extra file is in the same assembly, so it can build `StatTile`, `Tile` and `NameBanner` directly and feed them fake `Usage` with distinct `At` times). Put the elements in a window at Left/Top -32000 and show it, so animations run; after about a second, draw them with a `VisualBrush` into a `DrawingVisual` and save a `RenderTargetBitmap` at 120 DPI (125%). Render the whole window content: a `VisualBrush` of a lower part of a StackPanel came out blank. Private members (like `App.MakeTrayIcon`) are reachable by reflection.
+- **Logic tests the same way:** a console build (`/target:exe`) with its own `Main` can call `App.InputChanged` after setting `App.LastInput`, read private fields by reflection, and count as user input with a zero-pixel `SendInput` mouse move (`MOUSEEVENTF_MOVE`, 0, 0). Session 4's arrival test did this; it shows the real card on screen for 2 s, so tell the owner first.
+- **Install from the checkout without the setup:** parse the script's AST, run its `$Sources` / `$Monitor` / `$HotkeyLetter` / `$DirectHotkeys` assignments and its own fill-in block (from `function ConvertTo-CSharpString` to `Write-Host "Building..."`) with `Invoke-Expression`, write the manifest here-string, stop the app, compile to `%LOCALAPPDATA%\MonitorSwitcher\MonitorSwitcher.exe` with `/target:winexe /optimize+ /win32manifest:...`, and start it with no arguments. Same build as the setup, without the icon, shortcuts or the panel popping up.
+- **Is the owner on this PC?** `/get` says which input the monitor shows, and `GetLastInputInfo` says how long since this PC's mouse or keyboard was used. To see whether a window showed (like the card) without a screenshot, watch for its title with `EnumWindows` + `IsWindowVisible`.
+- **On the AMD PC:** compile check → offscreen preview → install from the checkout → look at the taskbar → the owner tries switching by hand. Don't switch inputs yourself.
 
 ## Taskbar screenshot script (verified 2026-10-23)
 Saves the right-hand part of the primary taskbar as a PNG, in physical pixels. Usage: `powershell -NoProfile -File capture-taskbar.ps1 <out.png> [widthPx]`.

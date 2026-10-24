@@ -12,7 +12,7 @@
 - Desktop mode reuses the same row inside the old floating card (`WidgetWindow`). The tray menu's Widget items set `WidgetMode` and call `ApplyWidgetMode`.
 
 ## Tile layout and styles (`StatTile`, `TileBody`)
-- Every tile shares one frame: a faint background (brighter on hover), a 16×3 accent bar under the PC that's on screen (like the line Windows draws under running apps), and click to switch. It says "no usage data" when nothing fresh (under 5 s old) is known, and "Switching…" while switching. The width never jumps: numbers sit in fixed boxes, and notes cover them without changing the size.
+- Every tile shares one frame: a faint background (brighter on hover) and click to switch. **The tile of the PC you're on** (this PC, `Settings.Self`) is tinted in that PC's color with a 1 px border, and its icon and name sit in a solid tag of that color (`NameTag`, since session 4, D22). A 16×3 accent bar marks the PC that's on screen, like the line Windows draws under running apps, but only under **another** PC's tile (you'd see it on a second screen); this PC's tint says it already. It says "no usage data" when nothing fresh (under 5 s old) is known, and "Switching…" while switching. The width never jumps: numbers sit in fixed boxes, and notes cover them without changing the size.
 - The numbers part comes from the style the owner picks (tray menu > Widget style; `WidgetStyle` in settings.ini; Classic by default). Widths per tile, measured from screenshots:
   - **Classic:** icon, name, then "CPU 23%  GPU 5%  RAM 61%" (labels 10 px at 60% opacity, values 10.5 px semibold in 28 DIP boxes). About 215 DIP.
   - **Bars:** icon, name, then a 50 DIP meter per metric with its label and number. About 190 DIP.
@@ -20,6 +20,14 @@
   - **Graphs:** icon, name, then a 44×19 DIP graph of the last 40 seconds per metric, with its label and number above. About 230 DIP.
 - Metric colors (Bars, Rings, Graphs): CPU blue #60A5FA, GPU purple #C084FC, RAM teal #2DD4BF, with darker shades on a light taskbar. 90% or more turns amber (#FFC14D on dark, #B45309 on light) in every style.
 - All four were captured in the AMD PC's taskbar on 2026-10-23, with live numbers from both PCs.
+- The name tag adds about 1 DIP per tile; the row on the AMD PC (Graphs, 125%) is about 578 px wide.
+
+## Which PC you're on: colors, tag and the "You're on" card (session 4, D22)
+- Colors come from `$Sources` (`Color = "#RRGGBB"`): Nvidia `#76B900`, AMD `#8E1622` (maroon; it was `#ED1C24` until the owner asked for a darker red). Text on a color is near-black or white by contrast, with white winning close calls (`Theme.InkOn`): white on AMD maroon, black on Nvidia green.
+- Taskbar and desktop widget: tint (alpha 0x2E) + border (alpha 0xA0) + solid name tag on this PC's tile. Same on light and dark taskbars.
+- Tray icon: the monitor glyph's screen is filled with this PC's color; tooltip "Monitor Switcher: you’re on AMD (Ctrl+Alt+M)" (cut to 63 characters, Windows' limit).
+- Switcher panel: a "This PC" chip in the PC's color at the top right of that tile.
+- `NameBanner`: a card of about 350×160 DIP (430×240 with its 40 DIP shadow margin) in a gradient of the PC's color, "You're on" over the name in 64 px bold, centered left to right and a bit above the middle of the primary work area. Shows when the monitor comes over from the other PC, 1.5 s or more after that is noticed and on the next mouse or keyboard input; stays 2 s, fades in 0.45 s. Click-through (`WS_EX_TRANSPARENT`), `WS_EX_NOACTIVATE`, topmost. The window is made on first use and then reused.
 
 ## Usage numbers (`Stats`)
 - PDH with English counter paths (`PdhAddEnglishCounter`), so it works in any Windows language. One query, collected every second on a background thread (`App.StartStats`, below-normal priority). A sample takes 1–3 ms. The whole app used about 0.03% of the CPU on the AMD PC.

@@ -17,10 +17,12 @@
 #   Code : the monitor's number for that port. Standard values:
 #          HDMI 1 = 17, HDMI 2 = 18, DisplayPort 1 = 15, DisplayPort 2 = 16
 #   Icon : desktop, laptop or tv
+#   Color: the PC's own color. The PC you're on shows its name in this color
+#          in the taskbar, so you can tell at a glance which PC you're using
 # Use the same list on every computer.
 $Sources = @(
-    @{ Name = "Nvidia"; Port = "DisplayPort"; Code = 15; Icon = "desktop" }
-    @{ Name = "AMD";    Port = "HDMI 1";      Code = 17; Icon = "desktop" }
+    @{ Name = "Nvidia"; Port = "DisplayPort"; Code = 15; Icon = "desktop"; Color = "#76B900" }
+    @{ Name = "AMD";    Port = "HDMI 1";      Code = 17; Icon = "desktop"; Color = "#8E1622" }
 )
 
 # Which monitor to control: "Primary", or its display number ("2") if this
@@ -86,10 +88,24 @@ namespace MonitorSwitcher
         public string Port;
         public int Code;
         public string Icon;
+        public Color Color;   // the PC's own color; Config picks one if the list has none
 
-        public Source(string name, string port, int code, string icon)
+        public Source(string name, string port, int code, string icon) : this(name, port, code, icon, "") { }
+
+        public Source(string name, string port, int code, string icon, string color)
         {
             Name = name; Port = port; Code = code; Icon = icon;
+            Color = ParseColor(color);
+        }
+
+        // "#76B900" or "76B900". Anything else gives a see-through color, which means "none".
+        static Color ParseColor(string text)
+        {
+            string hex = (text ?? "").Trim().TrimStart('#');
+            int rgb;
+            if (hex.Length != 6 || !int.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out rgb))
+                return Colors.Transparent;
+            return Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
         }
     }
 
@@ -102,6 +118,29 @@ namespace MonitorSwitcher
         public const string Monitor = "/*MONITOR*/";
         public const char HotkeyLetter = '/*HOTKEY*/';
         public static readonly bool DirectHotkeys = /*DIRECT*/;
+
+        static Config()
+        {
+            // A PC without a color in the list gets one of these.
+            Color[] spare =
+            {
+                Color.FromRgb(0x3B, 0x82, 0xF6), Color.FromRgb(0xF5, 0x9E, 0x0B), Color.FromRgb(0xEC, 0x48, 0x99),
+                Color.FromRgb(0x14, 0xB8, 0xA6), Color.FromRgb(0x8B, 0x5C, 0xF6)
+            };
+            for (int i = 0; i < Sources.Length; i++)
+                if (Sources[i].Color.A == 0) Sources[i].Color = spare[i % spare.Length];
+        }
+
+        // The PC this app runs on, or null if it isn't known yet.
+        public static Source Self
+        {
+            get
+            {
+                foreach (Source s in Sources)
+                    if (s.Code == Settings.Self) return s;
+                return null;
+            }
+        }
     }
 
     // ------------------------------------------------------------ DDC/CI
@@ -371,9 +410,16 @@ namespace MonitorSwitcher
             public uint dwFlags;
         }
 
+        // When the mouse or keyboard was last used, in milliseconds since Windows started.
+        [DllImport("user32.dll")]
+        public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LASTINPUTINFO { public uint cbSize, dwTime; }
+
         public const int WM_HOTKEY = 0x0312;
         public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
-        public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
+        public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000, WS_EX_TRANSPARENT = 0x20;
         public const uint MONITOR_DEFAULTTONEAREST = 2;
         public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
         public const int WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000;
@@ -409,6 +455,7 @@ namespace MonitorSwitcher
         public static string InstallId = "";           // tells this PC's messages apart from the other PC's
         public static bool SelfPicked;                 // the user picked Self in the menu, so don't detect it
         public static string WidgetStyle = "classic";  // see TileBody.Styles
+        public static bool NameOnSwitch = true;        // show this PC's name big after the monitor switches to it
 
         public static void Load()
         {
@@ -438,6 +485,7 @@ namespace MonitorSwitcher
                         else if (key == "Self" && isNumber) Self = (int)number;
                         else if (key == "SelfPicked") SelfPicked = value == "1";
                         else if (key == "WidgetStyle" && Array.IndexOf(TileBody.Styles, value) >= 0) WidgetStyle = value;
+                        else if (key == "NameOnSwitch") NameOnSwitch = value != "0";
                         else if (key == "InstallId" && value.IndexOf('|') < 0) InstallId = value;
                     }
                 }
@@ -466,6 +514,7 @@ namespace MonitorSwitcher
                     "Self=" + Self.ToString(inv),
                     "SelfPicked=" + (SelfPicked ? "1" : "0"),
                     "WidgetStyle=" + WidgetStyle,
+                    "NameOnSwitch=" + (NameOnSwitch ? "1" : "0"),
                     "InstallId=" + InstallId
                 });
             }
@@ -759,6 +808,26 @@ namespace MonitorSwitcher
         {
             return new CubicEase { EasingMode = EasingMode.EaseOut };
         }
+
+        // Text on a PC's color: near-black or white, whichever is easier to read.
+        // White wins close calls, so red gets white text and bright green gets black.
+        public static Color InkOn(Color fill)
+        {
+            double l = 0.2126 * Linear(fill.R) + 0.7152 * Linear(fill.G) + 0.0722 * Linear(fill.B);
+            double onWhite = 1.05 / (l + 0.05), onBlack = (l + 0.05) / 0.05;
+            return onBlack > 2 * onWhite ? Color.FromRgb(0x10, 0x10, 0x10) : Colors.White;
+        }
+
+        static double Linear(byte v)
+        {
+            double s = v / 255.0;
+            return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        }
+
+        public static Color Shade(Color c, double factor)
+        {
+            return Color.FromRgb((byte)(c.R * factor), (byte)(c.G * factor), (byte)(c.B * factor));
+        }
     }
 
     class Tile
@@ -778,6 +847,7 @@ namespace MonitorSwitcher
         readonly ScaleTransform scale = new ScaleTransform(1, 1);
         readonly Border activeLayer;
         readonly Border badge;
+        readonly Border selfTag;
         readonly TextBlock caption;
         bool active;
         bool pressed;
@@ -814,6 +884,20 @@ namespace MonitorSwitcher
                 Child = new TextBlock { Text = index.ToString(), FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = Theme.White(0xB3) }
             };
             Root.Children.Add(badge);
+
+            // "This PC" in the PC's own color, on the tile of the PC you're on.
+            selfTag = new Border
+            {
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(10), Padding = new Thickness(6, 1, 6, 2),
+                CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(source.Color), Visibility = Visibility.Collapsed,
+                Child = new TextBlock
+                {
+                    Text = "This PC", FontSize = 10.5, FontWeight = FontWeights.SemiBold,
+                    Foreground = new SolidColorBrush(Theme.InkOn(source.Color))
+                }
+            };
+            Root.Children.Add(selfTag);
 
             StackPanel stack = new StackPanel
             {
@@ -878,6 +962,11 @@ namespace MonitorSwitcher
             }
         }
 
+        public void SetSelf(bool self)
+        {
+            selfTag.Visibility = self ? Visibility.Visible : Visibility.Collapsed;
+        }
+
         internal static void Fade(SolidColorBrush brush, Color to)
         {
             brush.BeginAnimation(SolidColorBrush.ColorProperty,
@@ -926,12 +1015,56 @@ namespace MonitorSwitcher
     }
 
     // ------------------------------------------------------------ widget
+    // A PC's icon and name in the widget. On the PC you're on, it becomes a tag in
+    // that PC's own color, so you can tell at a glance which PC this is.
+    class NameTag
+    {
+        public readonly Border Root;
+        readonly SolidColorBrush ink, back;
+        readonly Color plainInk, tagInk, tagColor;
+
+        public NameTag(Source source, Color inkColor, double iconSize, double fontSize, double maxWidth, Thickness padding)
+        {
+            plainInk = inkColor;
+            tagColor = source.Color;
+            tagInk = Theme.InkOn(source.Color);
+            ink = new SolidColorBrush(inkColor);
+            back = new SolidColorBrush(Colors.Transparent);
+            StackPanel row = new StackPanel { Orientation = Orientation.Horizontal };
+            if (iconSize > 0)
+            {
+                FrameworkElement icon = Tile.MakeIcon(source.Icon, iconSize, ink);
+                icon.VerticalAlignment = VerticalAlignment.Center;
+                icon.Margin = new Thickness(0, 0, 7, 0);
+                row.Children.Add(icon);
+            }
+            row.Children.Add(new TextBlock
+            {
+                Text = source.Name, FontSize = fontSize, FontWeight = FontWeights.SemiBold, Foreground = ink,
+                MaxWidth = maxWidth, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center
+            });
+            // The padding is there either way, so the tile keeps its width when the tag turns on.
+            Root = new Border
+            {
+                Background = back, CornerRadius = new CornerRadius(5), Padding = padding,
+                VerticalAlignment = VerticalAlignment.Center, Child = row
+            };
+        }
+
+        public void SetSelf(bool self)
+        {
+            back.Color = self ? tagColor : Colors.Transparent;
+            ink.Color = self ? tagInk : plainInk;
+        }
+    }
+
     // The part of a tile that shows the numbers. Each widget style draws it its own
     // way; the tile around it (background, hover, click, the bar under the PC on
     // screen) is the same for every style.
     abstract class TileBody
     {
         public FrameworkElement Element;
+        public NameTag Tag;                       // the PC's name; a colored tag on this PC's tile
         public abstract void Show(Usage u);       // fresh numbers
         public abstract void Note(string text);   // a few words instead of the numbers, same size
 
@@ -982,14 +1115,6 @@ namespace MonitorSwitcher
             };
         }
 
-        protected static TextBlock MakeName(Source source, Brush ink, double size, double maxWidth)
-        {
-            TextBlock name = MakeText(source.Name, size, ink, 1, true);
-            name.MaxWidth = maxWidth;
-            name.TextTrimming = TextTrimming.CharacterEllipsis;
-            return name;
-        }
-
         protected static string Percent(int v)
         {
             return v < 0 ? "\u2013" : v + "%";
@@ -1017,7 +1142,11 @@ namespace MonitorSwitcher
             row.Children.Add(icon);
 
             StackPanel text = new StackPanel { Margin = new Thickness(9, 0, 0, 1), VerticalAlignment = VerticalAlignment.Center };
-            text.Children.Add(MakeName(source, ink, 12, 170));
+            // The tag reaches left by its padding, so the name still lines up with the numbers.
+            Tag = new NameTag(source, inkColor, 0, 12, 170, new Thickness(5, 0, 6, 1));
+            Tag.Root.HorizontalAlignment = HorizontalAlignment.Left;
+            Tag.Root.Margin = new Thickness(-5, 0, 0, 1);
+            text.Children.Add(Tag.Root);
             // The numbers keep their space while a note covers them, so the tile never changes width.
             Grid lower = new Grid();
             numbers = new StackPanel { Orientation = Orientation.Horizontal };
@@ -1077,14 +1206,11 @@ namespace MonitorSwitcher
             hot = Paint(HotColor(light), 255);
             StackPanel row = new StackPanel
             {
-                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 10, 0)
+                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 10, 0)
             };
-            FrameworkElement icon = Tile.MakeIcon(source.Icon, 16, ink);
-            icon.VerticalAlignment = VerticalAlignment.Center;
-            row.Children.Add(icon);
-            TextBlock name = MakeName(source, ink, 12, 120);
-            name.Margin = new Thickness(8, 0, 10, 1);
-            row.Children.Add(name);
+            Tag = new NameTag(source, inkColor, 16, 12, 120, new Thickness(6, 3, 8, 4));
+            Tag.Root.Margin = new Thickness(0, 0, 4, 0);
+            row.Children.Add(Tag.Root);
 
             Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
             meters = new Grid();
@@ -1165,11 +1291,11 @@ namespace MonitorSwitcher
             hot = Paint(HotColor(light), 255);
             StackPanel row = new StackPanel
             {
-                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 10, 0)
+                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(6, 0, 10, 0)
             };
-            TextBlock name = MakeName(source, ink, 12, 120);
-            name.Margin = new Thickness(0, 0, 10, 1);
-            row.Children.Add(name);
+            Tag = new NameTag(source, inkColor, 0, 12, 120, new Thickness(6, 3, 8, 4));
+            Tag.Root.Margin = new Thickness(0, 0, 2, 0);
+            row.Children.Add(Tag.Root);
 
             Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
             gauges = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
@@ -1274,14 +1400,11 @@ namespace MonitorSwitcher
             hotFill = Paint(HotColor(light), 0x50);
             StackPanel row = new StackPanel
             {
-                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 10, 0)
+                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 10, 0)
             };
-            FrameworkElement icon = Tile.MakeIcon(source.Icon, 16, ink);
-            icon.VerticalAlignment = VerticalAlignment.Center;
-            row.Children.Add(icon);
-            TextBlock name = MakeName(source, ink, 12, 120);
-            name.Margin = new Thickness(8, 0, 10, 1);
-            row.Children.Add(name);
+            Tag = new NameTag(source, inkColor, 16, 12, 120, new Thickness(6, 3, 8, 4));
+            Tag.Root.Margin = new Thickness(0, 0, 4, 0);
+            row.Children.Add(Tag.Root);
 
             Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
             cells = new StackPanel { Orientation = Orientation.Horizontal };
@@ -1385,7 +1508,9 @@ namespace MonitorSwitcher
     }
 
     // One PC in the widget. Click it to switch the monitor to that PC. The numbers come
-    // from the chosen style (TileBody); a small bar under the tile marks the PC on screen.
+    // from the chosen style (TileBody). The tile of the PC you're on is tinted in that
+    // PC's color and its name is a tag. A small bar under another PC's tile means the
+    // monitor is showing that PC (you'd only see it on a second screen).
     class StatTile
     {
         public readonly Source Source;
@@ -1397,7 +1522,8 @@ namespace MonitorSwitcher
         readonly SolidColorBrush fill;
         readonly ScaleTransform scale = new ScaleTransform(1, 1);
         readonly Border bar;
-        bool on, pressed, switching;
+        readonly Border tint;
+        bool on, pressed, switching, self;
 
         public StatTile(Source source, Color inkColor, double radius, string style)
         {
@@ -1414,6 +1540,14 @@ namespace MonitorSwitcher
                 RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5)
             };
             Root.Children.Add(new Border { CornerRadius = new CornerRadius(radius), Background = fill });
+            Color c = source.Color;
+            tint = new Border
+            {
+                CornerRadius = new CornerRadius(radius), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed,
+                Background = new SolidColorBrush(Color.FromArgb(0x2E, c.R, c.G, c.B)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb(0xA0, c.R, c.G, c.B))
+            };
+            Root.Children.Add(tint);
             body = TileBody.Create(style, source, inkColor);
             Root.Children.Add(body.Element);
 
@@ -1451,10 +1585,25 @@ namespace MonitorSwitcher
         {
             on = isOn;
             switching = isSwitching;
-            bar.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(on ? 1 : 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = Theme.EaseOut() });
+            ShowBar();
             if (!Root.IsMouseOver) Tile.Fade(fill, on ? current : idle);
             if (switching) body.Note("Switching\u2026");
+        }
+
+        // Is this the PC the app runs on, the one you're using?
+        public void SetSelf(bool isSelf)
+        {
+            self = isSelf;
+            tint.Visibility = self ? Visibility.Visible : Visibility.Collapsed;
+            body.Tag.SetSelf(self);
+            ShowBar();
+        }
+
+        // The tint already marks this PC, so its tile doesn't need the bar.
+        void ShowBar()
+        {
+            bar.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(on && !self ? 1 : 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = Theme.EaseOut() });
         }
 
         public void SetUsage(Usage u)
@@ -1510,6 +1659,7 @@ namespace MonitorSwitcher
 
         public void Refresh()
         {
+            foreach (StatTile t in tiles) t.SetSelf(t.Source.Code == Settings.Self);
             if (busy) return;
             foreach (StatTile t in tiles) t.SetState(t.Source.Code == App.LastInput, false);
             ShowUsage();
@@ -2001,6 +2151,7 @@ namespace MonitorSwitcher
             {
                 bool on = switchingTo >= 0 ? i == switchingTo : tiles[i].Source.Code == App.LastInput;
                 tiles[i].SetState(on, i == switchingTo ? "Switching\u2026" : null);
+                tiles[i].SetSelf(tiles[i].Source.Code == Settings.Self);
             }
         }
 
@@ -2073,6 +2224,118 @@ namespace MonitorSwitcher
         }
     }
 
+    // ------------------------------------------------------------ "You're on" banner
+    // Shows this PC's name big, in its own color, in the middle of the screen for a
+    // moment after the monitor switches to this PC. Clicks go straight through it,
+    // and it never takes the focus.
+    class NameBanner : Window
+    {
+        readonly Grid shell;
+        readonly Border card;
+        readonly Grid iconSlot;
+        readonly TextBlock name;
+        readonly SolidColorBrush ink = new SolidColorBrush(Colors.White);
+        readonly ScaleTransform scale = new ScaleTransform(1, 1);
+        int generation;
+
+        public NameBanner()
+        {
+            WindowStyle = WindowStyle.None;
+            AllowsTransparency = true;
+            Background = Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
+            ShowInTaskbar = false;
+            ShowActivated = false;
+            Topmost = true;
+            SizeToContent = SizeToContent.WidthAndHeight;
+            Title = "Monitor Switcher: this PC";
+            FontFamily = new FontFamily("Segoe UI");
+            UseLayoutRounding = true;
+
+            shell = new Grid { Margin = new Thickness(40), RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5) };
+            shell.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(30), Background = new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x13)),
+                Effect = new DropShadowEffect { BlurRadius = 50, ShadowDepth = 14, Direction = 270, Opacity = 0.5, Color = Colors.Black }
+            });
+            card = new Border
+            {
+                CornerRadius = new CornerRadius(30), BorderBrush = Theme.White(0x33), BorderThickness = new Thickness(1),
+                Padding = new Thickness(38, 24, 54, 30)
+            };
+            shell.Children.Add(card);
+
+            StackPanel row = new StackPanel { Orientation = Orientation.Horizontal };
+            iconSlot = new Grid { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 6, 28, 0) };
+            row.Children.Add(iconSlot);
+            StackPanel text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock { Text = "You\u2019re on", FontSize = 21, Foreground = ink, Opacity = 0.85 });
+            name = new TextBlock { FontSize = 64, FontWeight = FontWeights.Bold, Foreground = ink, Margin = new Thickness(0, -8, 0, 0) };
+            text.Children.Add(name);
+            row.Children.Add(text);
+            card.Child = row;
+            Content = shell;
+        }
+
+        public void InitHandle()
+        {
+            IntPtr h = new WindowInteropHelper(this).EnsureHandle();
+            int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
+            Native.SetWindowLong(h, Native.GWL_EXSTYLE, ex | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | Native.WS_EX_TRANSPARENT);
+        }
+
+        public void Fill(Source source)
+        {
+            Color c = source.Color;
+            card.Background = new LinearGradientBrush(c, Theme.Shade(c, 0.78), 90);
+            ink.Color = Theme.InkOn(c);
+            name.Text = source.Name;
+            iconSlot.Children.Clear();
+            iconSlot.Children.Add(Tile.MakeIcon(source.Icon, 72, ink));
+        }
+
+        public void Flash(Source source)
+        {
+            Fill(source);
+            shell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Size size = shell.DesiredSize;
+            Rect area = SystemParameters.WorkArea;
+            Left = area.Left + (area.Width - size.Width) / 2;
+            Top = area.Top + (area.Height - size.Height) * 0.42;
+
+            int g = ++generation;
+            shell.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)) { EasingFunction = Theme.EaseOut() });
+            DoubleAnimation pop = new DoubleAnimation(0.9, 1, TimeSpan.FromMilliseconds(340))
+            {
+                EasingFunction = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.35 }
+            };
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, pop);
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, pop);
+            Show();
+
+            // Stay for two seconds, then fade away.
+            DispatcherTimer stay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2000) };
+            stay.Tick += delegate
+            {
+                stay.Stop();
+                if (g != generation) return;
+                DoubleAnimation fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(450))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
+                };
+                fade.Completed += delegate
+                {
+                    if (g != generation) return;
+                    Hide();
+                    App.TrimSoon();
+                };
+                shell.BeginAnimation(UIElement.OpacityProperty, fade);
+            };
+            stay.Start();
+        }
+    }
+
     // ------------------------------------------------------------ app
     static class App
     {
@@ -2086,6 +2349,11 @@ namespace MonitorSwitcher
         static bool polling;
         static bool lightTaskbar;
         static DateTime nextDockTry = DateTime.MinValue;
+        static NameBanner banner;
+        static int seenInput = -1;          // the input InputChanged saw last
+        static DispatcherTimer arrival;     // waits for you to touch this PC after a switch to it
+        static DateTime arrivedAt;
+        static uint inputTick;
         static volatile Usage local;
         static readonly uint OwnPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
         const string InstanceName = "Local\\MonitorSwitcher.Instance";
@@ -2254,9 +2522,77 @@ namespace MonitorSwitcher
 
         public static void InputChanged()
         {
+            if (LastInput != seenInput)
+            {
+                // The monitor just came over to this PC from another one.
+                if (seenInput >= 0 && LastInput == Settings.Self) Arrived();
+                seenInput = LastInput;
+            }
             if (window != null) window.Refresh();
             if (widget != null) widget.Refresh();
             if (barRow != null) barRow.Refresh();
+        }
+
+        // After a switch to this PC, show its name once you use the mouse or keyboard
+        // here. Waiting for that means the picture is back and you're looking.
+        static void Arrived()
+        {
+            if (!Settings.NameOnSwitch || Config.Self == null) return;
+            if (arrival == null)
+            {
+                arrival = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+                arrival.Tick += delegate { CheckArrival(); };
+            }
+            arrivedAt = DateTime.UtcNow;
+            inputTick = LastInputTick();
+            arrival.Start();
+        }
+
+        static void CheckArrival()
+        {
+            double waited = (DateTime.UtcNow - arrivedAt).TotalSeconds;
+            uint tick = LastInputTick();
+            if (LastInput != Settings.Self || waited > 30)
+            {
+                arrival.Stop();   // switched away again, or nobody came
+                return;
+            }
+            // The monitor takes a moment to show the picture; input before that doesn't count.
+            if (waited < 1.5) inputTick = tick;
+            else if (tick != inputTick)
+            {
+                arrival.Stop();
+                FlashName();
+            }
+        }
+
+        static uint LastInputTick()
+        {
+            Native.LASTINPUTINFO info = new Native.LASTINPUTINFO();
+            info.cbSize = (uint)Marshal.SizeOf(typeof(Native.LASTINPUTINFO));
+            return Native.GetLastInputInfo(ref info) ? info.dwTime : 0;
+        }
+
+        // "You're on AMD", big, for a couple of seconds.
+        static void FlashName()
+        {
+            Source self = Config.Self;
+            if (self == null) return;
+            if (banner == null)
+            {
+                banner = new NameBanner();
+                banner.InitHandle();
+            }
+            banner.Flash(self);
+        }
+
+        // This PC turned out to be another one in the list (detected, or picked in the menu).
+        static void SelfChanged()
+        {
+            tray.Icon = MakeTrayIcon();
+            tray.Text = TrayText();
+            InputChanged();
+            UsageChanged();
         }
 
         // Measure this PC every second, send the numbers to the other PC, and update the widget.
@@ -2281,13 +2617,15 @@ namespace MonitorSwitcher
         }
 
         // Work out which PC this is from the cable, unless the user picked it in the menu.
-        static void UpdateSelf()
+        // True if it changed.
+        static bool UpdateSelf()
         {
-            if (Settings.SelfPicked) return;
+            if (Settings.SelfPicked) return false;
             int found = Identity.Detect();
-            if (found < 0 || found == Settings.Self) return;
+            if (found < 0 || found == Settings.Self) return false;
             Settings.Self = found;
             Settings.Save();
+            return true;
         }
 
         // This PC's tile shows what was measured here; the other PC's tile shows what it sent.
@@ -2404,7 +2742,7 @@ namespace MonitorSwitcher
             {
                 widget.Dispatcher.BeginInvoke(new Action(delegate
                 {
-                    UpdateSelf();
+                    if (UpdateSelf()) SelfChanged();
                     widget.Place();
                     dock.Place();
                     PollInput();
@@ -2465,9 +2803,10 @@ namespace MonitorSwitcher
                 && r.Right >= info.rcMonitor.Right && r.Bottom >= info.rcMonitor.Bottom;
         }
 
+        // Read the monitor's input, while a widget shows it or to notice a switch to this PC.
         static void PollInput()
         {
-            if (polling || !(dock.Docked || widget.IsVisible)) return;
+            if (polling || !(dock.Docked || widget.IsVisible || Settings.NameOnSwitch)) return;
             polling = true;
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -2488,7 +2827,7 @@ namespace MonitorSwitcher
         {
             tray = new Forms.NotifyIcon();
             tray.Icon = MakeTrayIcon();
-            tray.Text = "Monitor Switcher (Ctrl+Alt+" + Config.HotkeyLetter + ")";
+            tray.Text = TrayText();
             tray.MouseClick += delegate(object s, Forms.MouseEventArgs e)
             {
                 if (e.Button == Forms.MouseButtons.Left) window.Toggle();
@@ -2565,7 +2904,8 @@ namespace MonitorSwitcher
                     Settings.Self = code;
                     Settings.SelfPicked = true;
                     Settings.Save();
-                    UsageChanged();
+                    SelfChanged();
+                    FlashName();
                 };
                 selfItems.Add(selfItem);
                 selfMenu.DropDownItems.Add(selfItem);
@@ -2575,6 +2915,22 @@ namespace MonitorSwitcher
                 for (int i = 0; i < selfItems.Count; i++) selfItems[i].Checked = Config.Sources[i].Code == Settings.Self;
             };
             menu.Items.Add(selfMenu);
+
+            // The big "You're on AMD" after a switch to this PC. Turning it on shows it once.
+            Forms.ToolStripMenuItem nameItem = new Forms.ToolStripMenuItem();
+            nameItem.Click += delegate
+            {
+                Settings.NameOnSwitch = !Settings.NameOnSwitch;
+                Settings.Save();
+                if (Settings.NameOnSwitch) FlashName();
+            };
+            menu.Items.Add(nameItem);
+            menu.Opening += delegate
+            {
+                Source self = Config.Self;
+                nameItem.Text = "Show \u201CYou\u2019re on " + (self != null ? self.Name : "\u2026") + "\u201D after switching here";
+                nameItem.Checked = Settings.NameOnSwitch;
+            };
 
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("Quit", null, delegate { Application.Current.Shutdown(); });
@@ -2605,10 +2961,21 @@ namespace MonitorSwitcher
             }
         }
 
+        // "Monitor Switcher: you're on AMD (Ctrl+Alt+M)". Windows allows 63 characters.
+        static string TrayText()
+        {
+            Source self = Config.Self;
+            string text = "Monitor Switcher" + (self != null ? ": you\u2019re on " + self.Name : "")
+                + " (Ctrl+Alt+" + Config.HotkeyLetter + ")";
+            return text.Length > 63 ? text.Substring(0, 63) : text;
+        }
+
+        // A monitor outline. Its screen is filled with the color of the PC you're on.
         static Drawing.Icon MakeTrayIcon()
         {
             int s = Math.Max(16, Forms.SystemInformation.SmallIconSize.Width);
             Drawing.Color ink = LightTaskbar() ? Drawing.Color.FromArgb(255, 28, 28, 32) : Drawing.Color.White;
+            Source self = Config.Self;
             using (Drawing.Bitmap bmp = new Drawing.Bitmap(s, s, Drawing.Imaging.PixelFormat.Format32bppArgb))
             using (Drawing.Graphics g = Drawing.Graphics.FromImage(bmp))
             using (Drawing.Pen pen = new Drawing.Pen(ink, Math.Max(1.5f, s / 11f)))
@@ -2620,7 +2987,14 @@ namespace MonitorSwitcher
                 pen.LineJoin = Drawing.Drawing2D.LineJoin.Round;
                 float u = s / 24f;
                 using (Drawing.Drawing2D.GraphicsPath screen = RoundRect(2.5f * u, 3.5f * u, 19f * u, 13f * u, 2.5f * u))
+                {
+                    if (self != null)
+                    {
+                        using (Drawing.SolidBrush paint = new Drawing.SolidBrush(Drawing.Color.FromArgb(self.Color.R, self.Color.G, self.Color.B)))
+                            g.FillPath(paint, screen);
+                    }
                     g.DrawPath(pen, screen);
+                }
                 g.DrawLine(pen, 12f * u, 16.5f * u, 12f * u, 20f * u);
                 g.DrawLine(pen, 8f * u, 20.5f * u, 16f * u, 20.5f * u);
                 return Drawing.Icon.FromHandle(bmp.GetHicon());
@@ -2649,7 +3023,7 @@ function ConvertTo-CSharpString([string]$text) {
 
 $entries = foreach ($src in $Sources) {
     $codeNumber = [int]$src.Code
-    "            new Source({0}, {1}, {2}, {3})" -f (ConvertTo-CSharpString $src.Name), (ConvertTo-CSharpString $src.Port), $codeNumber, (ConvertTo-CSharpString $src.Icon)
+    "            new Source({0}, {1}, {2}, {3}, {4})" -f (ConvertTo-CSharpString $src.Name), (ConvertTo-CSharpString $src.Port), $codeNumber, (ConvertTo-CSharpString $src.Icon), (ConvertTo-CSharpString ([string]$src.Color))
 }
 
 $csSource = $AppSource.Replace('/*SOURCES*/', ($entries -join ",`r`n"))
