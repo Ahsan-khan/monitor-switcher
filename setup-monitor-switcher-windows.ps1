@@ -2716,14 +2716,15 @@ namespace MonitorSwitcher
             if (barRow != null) barRow.Refresh();
         }
 
-        // After a switch to this PC, show its name once you use the mouse or keyboard
-        // here. Waiting for that means the picture is back and you're looking.
+        // After a switch to this PC, show its name as soon as the mouse or keyboard has been
+        // used here, or after 3 seconds anyway. Not in the first half second, while the
+        // monitor brings the picture up.
         static void Arrived()
         {
             if (!Settings.NameOnSwitch || Config.Self == null) return;
             if (arrival == null)
             {
-                arrival = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+                arrival = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                 arrival.Tick += delegate { CheckArrival(); };
             }
             arrivedAt = DateTime.UtcNow;
@@ -2734,15 +2735,13 @@ namespace MonitorSwitcher
         static void CheckArrival()
         {
             double waited = (DateTime.UtcNow - arrivedAt).TotalSeconds;
-            uint tick = LastInputTick();
-            if (LastInput != Settings.Self || waited > 30)
+            if (LastInput != Settings.Self)
             {
-                arrival.Stop();   // switched away again, or nobody came
+                arrival.Stop();   // switched away again
                 return;
             }
-            // The monitor takes a moment to show the picture; input before that doesn't count.
-            if (waited < 1.5) inputTick = tick;
-            else if (tick != inputTick)
+            if (waited < 0.5) return;
+            if (LastInputTick() != inputTick || waited >= 3)
             {
                 arrival.Stop();
                 FlashName();
@@ -2915,8 +2914,16 @@ namespace MonitorSwitcher
 
             // Keep the highlight right when another computer switches the monitor.
             // A DDC read takes a few dozen milliseconds, so every couple of seconds is cheap.
-            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            poll.Tick += delegate { PollInput(); };
+            // While the monitor shows another PC, check every half second instead, so the
+            // "You're on" card shows soon after a switch back to this PC.
+            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            int ticks = 0;
+            poll.Tick += delegate
+            {
+                ticks++;
+                bool away = Settings.NameOnSwitch && Settings.Self >= 0 && LastInput >= 0 && LastInput != Settings.Self;
+                if (away || ticks % 4 == 0) PollInput();
+            };
             poll.Start();
 
             // Windows reports a display change when the monitor switches to or away

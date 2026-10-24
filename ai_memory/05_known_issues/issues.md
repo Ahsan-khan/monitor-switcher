@@ -7,7 +7,7 @@
 - The PCs must be on the **same network**, and Windows Firewall must allow the app on at least one of them.
 - Usage updates once a second. The other PC's numbers count as missing after 5 s ("no usage data").
 - GPU % is the busiest engine across all graphics adapters (Task Manager's method).
-- The input is polled every 2 s while a widget is showing or the "You're on" card is on (the default). With both off, it updates only when the panel opens.
+- The input is polled every 2 s while a widget is showing or the "You're on" card is on (the default), and every 0.5 s while the monitor shows another PC (card on). With both off, it updates only when the panel opens. The app costs about 0.09% CPU while polling fast (measured 2026-10-24).
 - The panel and the desktop card are always dark. The taskbar row follows the taskbar's light or dark setting.
 - No uninstall, no version number and no update check. A PC updates only when the owner runs the install command again.
 - No automated tests. The compile check in `07_dev_environment` is the main safety net.
@@ -22,7 +22,7 @@
 - If another app owns one of the hotkeys, a balloon at startup lists the taken ones. `$DirectHotkeys = $false` turns off Ctrl+Alt+1…9 for keyboards that type with AltGr + number.
 - A failed switch shows "Couldn't reach the monitor. Is DDC/CI turned on?" (a balloon, or red text in the panel).
 - Exit codes: `/get` = the current input or -1; `/whoami` = this PC's input or -1; `/switch` = 0 (OK), 1 (failed) or 2 (not a number).
-- The "You're on" card (D22) shows only after the input changes from another PC to this one, and only on the first mouse or keyboard input at least 1.5 s after the change is noticed (up to 2 s after the switch, the poll interval). No input within 30 s: no card. It never shows at startup. It sits at the top right of the primary screen. Turn it off in the tray menu (`NameOnSwitch=0`).
+- The "You're on" card (D22) shows only after the input changes from another PC to this one: 0.5 s after the change is noticed if the mouse or keyboard was used, otherwise at 3 s. The change is noticed up to 0.5 s after the switch. If the monitor itself takes longer than that to show the picture, part of the 2.5 s card can be missed. It never shows at startup. It sits at the top right of the primary screen. Turn it off in the tray menu (`NameOnSwitch=0`).
 - The card's logo comes from the graphics card maker's app (D22). The NVIDIA app paths are untested; if none exists, the card shows the monitor icon instead. A `logo.png` in the app folder overrides it.
 - The colored tag follows `Self`, which comes from the cable or the "This PC is" menu. If `Self` is wrong, the wrong PC gets the tag; fix it in the menu.
 - A taskbar screenshot taken on a PC shows that PC's own taskbar even while the monitor shows the other PC, so it doesn't prove the owner can see it. `/get` and `GetLastInputInfo` tell you where they are.

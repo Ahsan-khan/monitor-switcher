@@ -33,7 +33,7 @@
 
 **Switch from the widget:** click a tile → it shows "Switching…" → `Ddc.SetInput(code)` runs on a worker thread. On success, `App.LastInput = code` and every view refreshes. On failure, the row shakes and a tray balloon says "Couldn't reach the monitor. Is DDC/CI turned on?"
 
-**The monitor comes over to this PC** (D22): `InputChanged` sees the input change from another PC's code to `Settings.Self` (never on the first reading at startup). `Arrived` starts a 150 ms timer; once 1.5 s have passed **and** the mouse or keyboard has been used here (`GetLastInputInfo` changed), `FlashName` slides the small `NameBanner` card ("You're on AMD", with the maker's logo) into the top-right corner for 2.5 s plus a 0.35 s fade. It gives up after 30 s, or if the input leaves this PC again.
+**The monitor comes over to this PC** (D22): `InputChanged` sees the input change from another PC's code to `Settings.Self` (never on the first reading at startup). `Arrived` starts a 100 ms timer; after 0.5 s, as soon as the mouse or keyboard has been used here since then (`GetLastInputInfo` changed), or at 3 s anyway, `FlashName` slides the small `NameBanner` card ("You're on AMD", with the maker's logo) into the top-right corner for 2.5 s plus a 0.35 s fade. It's cancelled if the input leaves this PC again.
 
 **This PC changes** (cable detection on a display change, or "This PC is" in the menu): `SelfChanged` redraws the tray icon and tooltip and refreshes the rows, which move the tint and name tag (`StatTile.SetSelf`). Picking it in the menu also flashes the card.
 
@@ -41,7 +41,7 @@
 
 **Every second, UI timer:** in taskbar mode, `KeepDocked` re-docks after an Explorer restart, follows the tray's left edge, and re-asserts the z-order. In desktop mode, it hides the widget while a fullscreen app covers its screen.
 
-**Every 2 s:** `PollInput` re-reads the input while a widget is showing, or while the "You're on" card is turned on (`NameOnSwitch`). A display change runs `UpdateSelf` (and `SelfChanged` if this PC turned out to be another one), re-places the widgets, polls, and refreshes the usage. A light/dark theme change re-docks the taskbar widget with the matching text color and redraws the tray icon.
+**Every 2 s** (a 0.5 s timer that polls every 4th tick): `PollInput` re-reads the input while a widget is showing, or while the "You're on" card is turned on (`NameOnSwitch`). While the monitor shows another PC and the card is on, it polls on every tick (0.5 s), so a switch back is noticed quickly. A display change runs `UpdateSelf` (and `SelfChanged` if this PC turned out to be another one), re-places the widgets, polls, and refreshes the usage. A light/dark theme change re-docks the taskbar widget with the matching text color and redraws the tray icon.
 
 ## Code map (`setup-monitor-switcher-windows.ps1`, line numbers as of session 4)
 ### PowerShell
@@ -50,12 +50,12 @@
 | 1–11 | Header comment | How to run it, and what it builds |
 | 13–38 | **Settings** | `$Sources` (Name, Port, Code, Icon, Color), `$Monitor`, `$HotkeyLetter`, `$DirectHotkeys`. The only part the owner edits |
 | 40–59 | Checks | PowerShell 7 relaunch, setting checks, paths, stop the running copy |
-| 62–3200 | `$AppSource` | The C# app (next table) |
-| 3203–3215 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
-| 3217–3269 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
-| 3271–3313 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
-| 3315–3338 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
-| 3340–3388 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
+| 62–3207 | `$AppSource` | The C# app (next table) |
+| 3210–3222 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
+| 3224–3276 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
+| 3278–3320 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
+| 3322–3345 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
+| 3347–3395 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
 
 ### C# inside `$AppSource` (namespace `MonitorSwitcher`)
 | Lines | Class | Role |
@@ -86,7 +86,7 @@
 | 1979–2226 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
 | 2232–2336 | `NameBanner` | The small "You're on AMD" card: `Fill` (color, logo, name), `Flash` (top right, slide in, 2.5 s, fade, hide). Click-through |
 | 2342–2520 | `Logo` | The graphics card maker's logo from its own app's icon (`PrivateExtractIcons`), the white-mark cut-out, `logo.png` override |
-| 2523–3198 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the arrival watch (`Arrived`, `CheckArrival`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
+| 2523–3205 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the arrival watch (`Arrived`, `CheckArrival`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
 
 ### Other files
 | File | Role |
