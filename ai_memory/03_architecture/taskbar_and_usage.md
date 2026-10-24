@@ -24,6 +24,16 @@
 - **RAM:** `GlobalMemoryStatusEx`: (total − available) / total.
 - PDH array items are 24 bytes on 32- and 64-bit: a name pointer, the status at +8 and the value at +16.
 
+## Accuracy check (2026-10-23)
+The widget's on-screen text (read through UI Automation) was compared with Windows' own counters, read at the same moment by PowerShell's `Get-Counter`:
+- Idle: RAM 73% vs 73% on every sample; GPU 4–7% vs 4–6%; CPU within a few points (CPU changes from second to second, and the two readings don't cover exactly the same second).
+- All 16 logical cores busy: CPU 100% vs 100%.
+- 2 GB of RAM taken: RAM 73% → 85% vs 85%; 71% after it was released.
+- A blurred, spinning test window: GPU 5% → 58% vs 58%; about 5% after it closed.
+- All three loads at once: CPU 100% (shown in amber), GPU 22% (the busy CPU slowed the test window down), RAM 86%.
+
+How to repeat it: "Check the numbers" in `07_dev_environment`.
+
 ## The PC-to-PC link (`Link`)
 - UDP port **47815** on all network interfaces. Every second each PC sends `MSW1|<install id>|<its input code>|<cpu>|<gpu>|<ram>` to the broadcast address of every IPv4 network it's on (re-read every 30 s), plus a direct copy to every PC it has heard from.
 - It ignores its own install ID, clamps the values, ignores messages over 200 bytes, and remembers at most 16 senders. No names or other personal data are sent.

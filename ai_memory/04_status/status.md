@@ -1,13 +1,14 @@
 # Current status (last updated 2026-10-23, end of session 3)
 
 ## In one paragraph
-**Monitor Switcher** works. It's a small Windows tray app, built on each PC by one PowerShell script, that switches the Samsung Odyssey G91F between the **Nvidia** PC (DisplayPort, input 15) and the **AMD** PC (HDMI 1, input 17). Since session 3 the widget sits **inside the taskbar** and shows **CPU, GPU and RAM use for both PCs**; the PCs send each other their numbers over the home network. On the **AMD PC** the new version is installed and running, docked left of the tray, and Windows Firewall allows it. The **Nvidia PC** still runs the 2026-10-22 version, so on the AMD PC its tile says "no usage data". The change is committed but **not pushed**, and the install command downloads from GitHub `main`, so the Nvidia PC can only get it after a push.
+**Monitor Switcher** works. It's a small Windows tray app, built on each PC by one PowerShell script, that switches the Samsung Odyssey G91F between the **Nvidia** PC (DisplayPort, input 15) and the **AMD** PC (HDMI 1, input 17). Since session 3 the widget sits **inside the taskbar** and shows **CPU, GPU and RAM use for both PCs**; the PCs send each other their numbers over the home network. On the **AMD PC** the new version is installed and running, docked left of the tray, and Windows Firewall allows it. The **Nvidia PC** still runs the 2026-10-22 version, so on the AMD PC its tile says "no usage data". The code is **pushed** to GitHub `main` (`89ce870`, 2026-10-23), so the README install command now gets the new version.
 
 ## What works (verified on the AMD PC, 2026-10-23)
 - **Taskbar widget:** docked left of the tray, with this PC's live CPU / GPU / RAM and the accent bar under the PC on screen. A fake "Nvidia" message sent to the app showed up on the Nvidia tile.
 - **Desktop mode:** the same row in the floating card, with the taskbar left clear.
 - **Which PC is this:** detected from the cable (HDMI = AMD), even while the monitor was showing the Nvidia PC.
 - **Usage readings:** Task Manager's method; the whole app costs about 0.03% CPU.
+- **The numbers are real:** they match Windows' own counters, idle and under real CPU, RAM and GPU load (see "Accuracy check" in `03_architecture/taskbar_and_usage.md`).
 - **Setup:** builds with the new manifest, prints which PC it's on, and mentions Windows' network prompt.
 - Panel, hotkeys, tray icon and command line: as before.
 
@@ -24,7 +25,7 @@
 - `.gitattributes` still has a leftover `*.sh` rule.
 
 ## Owner's to-dos (suggested)
-1. Push the commit (or let the assistant push it), then run the README install command on the **Nvidia PC** and click **Allow** when Windows asks about the network.
+1. Run the README install command on the **Nvidia PC** and click **Allow** when Windows asks about the network.
 2. Check both tiles show numbers on both PCs, and say if you'd like a different look.
 
 ## Suggested first thing next session
