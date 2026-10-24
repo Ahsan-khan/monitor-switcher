@@ -1555,14 +1555,14 @@ namespace MonitorSwitcher
             };
             Root.Children.Add(new Border { CornerRadius = new CornerRadius(radius), Background = fill });
             // A bright color makes a loud tile, so the brighter the color, the lighter the tint:
-            // AMD's dark maroon gets all of it, NVIDIA's bright green less than half.
+            // AMD's dark maroon gets a full tint, NVIDIA's bright green only a soft outline.
             Color c = source.Color;
             double k = Math.Min(1, Math.Sqrt(0.073 / Math.Max(0.001, Theme.Luminance(c))));
             tint = new Border
             {
                 CornerRadius = new CornerRadius(radius), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed,
-                Background = new SolidColorBrush(Color.FromArgb((byte)Math.Round(0x2E * k), c.R, c.G, c.B)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb((byte)Math.Round(0xA0 * Math.Pow(k, 0.75)), c.R, c.G, c.B))
+                Background = new SolidColorBrush(Color.FromArgb((byte)Math.Round(0x2E * Math.Max(0, 2 * k - 1)), c.R, c.G, c.B)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb((byte)Math.Round(0xA0 * Math.Pow(k, 0.83)), c.R, c.G, c.B))
             };
             Root.Children.Add(tint);
             body = TileBody.Create(style, source, inkColor);
