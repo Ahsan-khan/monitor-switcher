@@ -7,12 +7,13 @@ This folder holds everything a new AI session needs to keep building Monitor Swi
 | 1 | `01_project/overview.md` | What it is, the owner's setup and preferences (**read the preferences**) |
 | 2 | `04_status/status.md` | What works now, gaps, and the suggested first thing to do |
 | 3 | `03_architecture/architecture.md` | How it fits together, plus a code map with line numbers |
-| 4 | `03_architecture/ddc_ci.md` | How the monitor gets switched (DDC/CI), input codes, how to find them |
-| 5 | `02_decisions/decisions.md` | Every major choice and why (D1–D13). Don't re-litigate without reason |
-| 6 | `05_known_issues/issues.md` | Limits, behaviors, untested areas, gotchas |
-| 7 | `06_roadmap/roadmap.md` | Ideas for what's next (nothing agreed with the owner yet) |
-| 8 | `07_dev_environment/environment.md` | This PC, **install and compile-check commands**, testing patterns |
-| 9 | `08_session_log/` | A dated log of each session |
+| 4 | `03_architecture/taskbar_and_usage.md` | The taskbar widget, the CPU / GPU / RAM readings, the PC-to-PC link, and how each PC knows which one it is |
+| 5 | `03_architecture/ddc_ci.md` | How the monitor gets switched (DDC/CI), input codes, how to find them |
+| 6 | `02_decisions/decisions.md` | Every major choice and why (D1–D19). Don't re-litigate without reason |
+| 7 | `05_known_issues/issues.md` | Limits, behaviors, untested areas, gotchas |
+| 8 | `06_roadmap/roadmap.md` | What's next (ideas; check with the owner) |
+| 9 | `07_dev_environment/environment.md` | This PC, **install, compile-check and test commands** |
+| 10 | `08_session_log/` | A dated log of each session |
 
 **Rules:**
 - At the end of each session, update `04_status/status.md`, add a session log entry, and record new decisions.

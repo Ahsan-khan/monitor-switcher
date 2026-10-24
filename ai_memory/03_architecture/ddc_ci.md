@@ -13,7 +13,7 @@
 ## Input codes
 | Port | Standard code | On this monitor (G91F) |
 |---|---|---|
-| DisplayPort 1 | 15 (`0x0F`) | Nvidia PC |
+| DisplayPort 1 | 15 (`0x0F`) | Nvidia PC (`/get` on the AMD PC returned 15 while the monitor showed it, 2026-10-23) |
 | DisplayPort 2 | 16 (`0x10`) | not used |
 | HDMI 1 | 17 (`0x11`) | AMD PC (`/get` returned 17 on 2026-10-23) |
 | HDMI 2 | 18 (`0x12`) | the MacBook, until 2026-10-21 |
@@ -22,7 +22,7 @@
 - `GetInput` keeps only the low byte of the reply (`current & 0xFF`), since some monitors set the high byte.
 
 ## How to find a port's code
-- Run the setup on a PC while the monitor shows that PC. It prints "The monitor is showing input N, so this computer is '<name>'", or warns if N isn't in the list.
+- Run the setup on a PC while the monitor shows that PC. It prints which PC it's on, and warns if the monitor reports an input that isn't in the list.
 - Or read it at any time (safe, read-only):
   ```powershell
   (Start-Process "$env:LOCALAPPDATA\MonitorSwitcher\MonitorSwitcher.exe" -ArgumentList /get -Wait -PassThru).ExitCode
@@ -33,6 +33,7 @@
 - `$Monitor = "Primary"` (the default) picks Windows' primary display.
 - A number picks the display whose device name is `\\.\DISPLAY<number>`. **That's Windows' internal number, not the one in Settings → Display.** On the AMD PC, the only monitor is `\\.\DISPLAY9`. Keep "Primary" unless a PC has several monitors.
 - The command goes to every physical monitor behind that display, and counts as a success if any of them accepts it.
+- Which *PC* this is (as opposed to which monitor) comes from the cable type; see `taskbar_and_usage.md`.
 
 ## Reliability details
 - `SetInput` tries up to 3 times, 80 ms apart. `GetInput` tries twice, 50 ms apart.
@@ -40,5 +41,6 @@
 - A read takes "a few dozen milliseconds" (code comment), which is why polling every 2 s is fine.
 
 ## Switching from the PC that isn't on screen
-- The script's header says the hotkeys work "even when the monitor is showing another computer". That depends on the monitor still answering DDC on an input it isn't showing, and on Windows still treating the monitor as connected. **Not verified on the G91F** as of 2026-10-23.
+- The script's header says the hotkeys work "even when the monitor is showing another computer". That depends on the monitor still answering DDC on an input it isn't showing, and on Windows still treating the monitor as connected.
+- **Verified 2026-10-23 (reading only):** while the monitor showed the Nvidia PC, the AMD PC still read the input (15) over DDC, and Windows kept its HDMI connection active. Switching from the off-screen PC wasn't tried.
 - When the monitor comes back to a PC, Windows raises a display-change event and the app re-reads the input right away. That keeps the widget's highlight right (D9).

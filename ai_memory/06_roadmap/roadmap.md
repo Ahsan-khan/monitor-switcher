@@ -1,15 +1,19 @@
-# Roadmap (ideas only; nothing agreed with the owner yet)
+# Roadmap (ideas only; check with the owner)
 
-Done in sessions 1–2: the tray app and panel, direct hotkeys, the desktop widget, the two-PC setup (Nvidia / AMD), and faster widget updates. Session 3 added this `ai_memory/` folder.
+Done in sessions 1–3: the tray app and panel, direct hotkeys, the desktop widget, the two-PC setup (Nvidia / AMD), faster widget updates, this `ai_memory/` folder, and (session 3) the taskbar widget with CPU / GPU / RAM for both PCs.
 
-## P1: Small cleanups (offer these first)
-- Update the script's header comment (lines 4–9): Ctrl+Alt+1 / 2, and mention the widget.
+## P1: Finish the taskbar widget
+- Push, then install on the Nvidia PC (the owner runs the README command there and clicks Allow).
+- Confirm both tiles show numbers on both PCs. If not, see `04_status` for what to check.
+- Ask the owner about the look (they like picking between options).
 - Drop the leftover `*.sh` line from `.gitattributes`.
-- Make sure the Nvidia PC runs the latest build (run the install command there once).
 
 ## P2: Possible improvements (ask the owner first)
-- Show a version (for example the commit date) in the tray menu, plus an "Update" item that runs the install command.
-- An uninstall option (tray menu or a small script) that removes the folder and the three shortcuts.
+- A way to type the other PC's address, for networks where broadcasts don't get through.
+- Show the usage in the big panel too.
+- More numbers if wanted: GPU memory (`GPU Adapter Memory` counters), CPU or GPU temperature (needs vendor tools or admin rights, so harder).
+- A version (for example the commit date) in the tray menu, plus an "Update" item that runs the install command.
+- An uninstall option (tray menu or a small script) that removes the folder, the three shortcuts and the firewall rules.
 
 ## P3: Bigger, only if asked
 - Bring back the MacBook. The old Mac script is in git (`git show 6da1198:setup-monitor-switcher-mac.sh`).

@@ -11,9 +11,12 @@ On each PC, open PowerShell and run:
 $f="$env:TEMP\ms.ps1"; irm https://raw.githubusercontent.com/Ahsan-khan/monitor-switcher/main/setup-monitor-switcher-windows.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
-- A small widget sits on your desktop: click a PC to switch to it.
-  Drag it anywhere; right-click it for options. It hides while a game or video is fullscreen.
+- A widget in the taskbar, left of the clock, shows each PC's CPU, GPU and RAM use.
+  Click a PC to switch to it. Right-click it for options, like moving it onto the desktop.
 - Ctrl+Alt+1 / 2 switch straight to Nvidia / AMD.
 - Ctrl+Alt+M (or the tray icon) opens the big switcher panel.
+
+The PCs share their usage over your home network, so install it on both. The first
+time it runs, Windows asks whether Monitor Switcher may use the network: click Allow.
 
 To change names or ports, edit the list at the top of the script and run it again.

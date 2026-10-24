@@ -2,8 +2,10 @@
 # Right-click this file > "Run with PowerShell". Run it once on each Windows PC.
 #
 # It builds a small app on this PC that lives in the system tray:
+#   - A widget in the taskbar shows each PC's CPU, GPU and RAM use. Click a
+#     PC to switch the monitor to it
 #   - Press Ctrl+Alt+M (or click the tray icon) for the switcher panel
-#   - Press Ctrl+Alt+1 / 2 / 3 to jump straight to a source, even when the
+#   - Press Ctrl+Alt+1, 2... to jump straight to a source, even when the
 #     monitor is showing another computer
 # It starts automatically when you sign in. Run this again after editing
 # the settings below to rebuild it.
@@ -58,6 +60,9 @@ Start-Sleep -Milliseconds 400
 $AppSource = @'
 using System;
 using System.Collections.Generic;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -189,6 +194,16 @@ namespace MonitorSwitcher
             }
         }
 
+        // The Windows name of the monitor being controlled, like DISPLAY1 with a prefix.
+        public static string DeviceName()
+        {
+            IntPtr hMonitor = FindMonitor();
+            if (hMonitor == IntPtr.Zero) return null;
+            MONITORINFOEX info = new MONITORINFOEX();
+            info.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
+            return GetMonitorInfo(hMonitor, ref info) ? info.szDevice : null;
+        }
+
         public static bool SetInput(int code)
         {
             lock (Gate)
@@ -221,6 +236,100 @@ namespace MonitorSwitcher
                 }
                 return result;
             }
+        }
+    }
+
+    // ------------------------------------------------------------ which PC is this?
+    // Windows knows whether the monitor is plugged into this PC by HDMI or
+    // DisplayPort, even while the monitor shows another PC. If only one PC in the
+    // list uses that kind of port, it's this one.
+    static class Identity
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        struct PATH_INFO   // DISPLAYCONFIG_PATH_INFO, 72 bytes
+        {
+            public uint SourceLuidLow;
+            public int SourceLuidHigh;
+            public uint SourceId, SourceModeIndex, SourceFlags;
+            public uint TargetLuidLow;
+            public int TargetLuidHigh;
+            public uint TargetId, TargetModeIndex, OutputTechnology, Rotation, Scaling,
+                RefreshNumerator, RefreshDenominator, ScanLineOrdering;
+            public int TargetAvailable;
+            public uint TargetFlags, Flags;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Size = 64)]
+        struct MODE_INFO   // DISPLAYCONFIG_MODE_INFO, not read
+        {
+            public uint InfoType;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct SOURCE_NAME   // DISPLAYCONFIG_SOURCE_DEVICE_NAME
+        {
+            public int Type, Size;
+            public uint LuidLow;
+            public int LuidHigh;
+            public uint Id;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string GdiName;
+        }
+
+        [DllImport("user32.dll")]
+        static extern int GetDisplayConfigBufferSizes(uint flags, out uint paths, out uint modes);
+        [DllImport("user32.dll")]
+        static extern int QueryDisplayConfig(uint flags, ref uint paths, [Out] PATH_INFO[] pathArray,
+            ref uint modes, [Out] MODE_INFO[] modeArray, IntPtr topology);
+        [DllImport("user32.dll")]
+        static extern int DisplayConfigGetDeviceInfo(ref SOURCE_NAME request);
+
+        const uint ActivePaths = 2;   // QDC_ONLY_ACTIVE_PATHS
+
+        // This PC's input code, or -1 if the cable doesn't tell.
+        public static int Detect()
+        {
+            try
+            {
+                string device = Ddc.DeviceName();
+                uint pathCount, modeCount;
+                if (device == null || GetDisplayConfigBufferSizes(ActivePaths, out pathCount, out modeCount) != 0) return -1;
+                PATH_INFO[] paths = new PATH_INFO[pathCount];
+                MODE_INFO[] modes = new MODE_INFO[modeCount];
+                if (QueryDisplayConfig(ActivePaths, ref pathCount, paths, ref modeCount, modes, IntPtr.Zero) != 0) return -1;
+                for (int i = 0; i < pathCount; i++)
+                {
+                    SOURCE_NAME name = new SOURCE_NAME();
+                    name.Type = 1;   // DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME
+                    name.Size = Marshal.SizeOf(typeof(SOURCE_NAME));
+                    name.LuidLow = paths[i].SourceLuidLow;
+                    name.LuidHigh = paths[i].SourceLuidHigh;
+                    name.Id = paths[i].SourceId;
+                    if (DisplayConfigGetDeviceInfo(ref name) == 0
+                        && string.Equals(name.GdiName, device, StringComparison.OrdinalIgnoreCase))
+                        return FromPort(paths[i].OutputTechnology);
+                }
+            }
+            catch (Exception) { }
+            return -1;
+        }
+
+        static int FromPort(uint technology)
+        {
+            int[] codes;
+            if (technology == 5) codes = new int[] { 17, 18 };                                              // HDMI
+            else if (technology == 10 || technology == 11 || technology == 18) codes = new int[] { 15, 16 };   // DisplayPort, also over USB-C
+            else if (technology == 4) codes = new int[] { 3, 4 };                                           // DVI
+            else if (technology == 0) codes = new int[] { 1, 2 };                                           // VGA
+            else return -1;
+            int match = -1;
+            foreach (Source s in Config.Sources)
+            {
+                if (Array.IndexOf(codes, s.Code) < 0) continue;
+                if (match >= 0) return -1;   // two PCs use this kind of port
+                match = s.Code;
+            }
+            return match;
         }
     }
 
@@ -266,6 +375,24 @@ namespace MonitorSwitcher
         public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
         public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
         public const uint MONITOR_DEFAULTTONEAREST = 2;
+        public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
+        public const int WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000;
+        public const int WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
+
+        // For the taskbar widget.
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr FindWindow(string className, string windowName);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string windowName);
+        [DllImport("user32.dll")]
+        public static extern bool IsWindow(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int width, int height, uint flags);
+        [DllImport("user32.dll")]
+        public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int X, Y; }
     }
 
     // ------------------------------------------------------------ settings
@@ -274,32 +401,53 @@ namespace MonitorSwitcher
         static readonly string FilePath = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MonitorSwitcher", "settings.ini");
 
-        public static bool WidgetVisible = true;
+        public static string WidgetMode = "taskbar";   // "taskbar", "desktop" or "off"
         public static bool WidgetOnTop = true;
         public static double WidgetLeft = double.NaN;
         public static double WidgetTop = double.NaN;
+        public static int Self = -1;                   // input code of this PC; the setup writes it
+        public static string InstallId = "";           // tells this PC's messages apart from the other PC's
+        public static bool SelfPicked;                 // the user picked Self in the menu, so don't detect it
 
         public static void Load()
         {
+            bool modeSet = false, hidden = false;
             try
             {
-                if (!System.IO.File.Exists(FilePath)) return;
-                foreach (string line in System.IO.File.ReadAllLines(FilePath))
+                if (System.IO.File.Exists(FilePath))
                 {
-                    int eq = line.IndexOf('=');
-                    if (eq <= 0) continue;
-                    string key = line.Substring(0, eq).Trim();
-                    string value = line.Substring(eq + 1).Trim();
-                    double number;
-                    bool isNumber = double.TryParse(value, System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out number);
-                    if (key == "WidgetVisible") WidgetVisible = value == "1";
-                    else if (key == "WidgetOnTop") WidgetOnTop = value == "1";
-                    else if (key == "WidgetLeft" && isNumber) WidgetLeft = number;
-                    else if (key == "WidgetTop" && isNumber) WidgetTop = number;
+                    foreach (string line in System.IO.File.ReadAllLines(FilePath))
+                    {
+                        int eq = line.IndexOf('=');
+                        if (eq <= 0) continue;
+                        string key = line.Substring(0, eq).Trim();
+                        string value = line.Substring(eq + 1).Trim();
+                        double number;
+                        bool isNumber = double.TryParse(value, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out number);
+                        if (key == "WidgetMode" && (value == "taskbar" || value == "desktop" || value == "off"))
+                        {
+                            WidgetMode = value;
+                            modeSet = true;
+                        }
+                        else if (key == "WidgetVisible") hidden = value == "0";
+                        else if (key == "WidgetOnTop") WidgetOnTop = value == "1";
+                        else if (key == "WidgetLeft" && isNumber) WidgetLeft = number;
+                        else if (key == "WidgetTop" && isNumber) WidgetTop = number;
+                        else if (key == "Self" && isNumber) Self = (int)number;
+                        else if (key == "SelfPicked") SelfPicked = value == "1";
+                        else if (key == "InstallId" && value.IndexOf('|') < 0) InstallId = value;
+                    }
                 }
             }
             catch (Exception) { }
+            // Older versions only saved WidgetVisible. A hidden widget stays hidden.
+            if (!modeSet && hidden) WidgetMode = "off";
+            if (InstallId.Length == 0)
+            {
+                InstallId = Guid.NewGuid().ToString("N").Substring(0, 12);
+                Save();
+            }
         }
 
         public static void Save()
@@ -309,13 +457,280 @@ namespace MonitorSwitcher
                 System.Globalization.CultureInfo inv = System.Globalization.CultureInfo.InvariantCulture;
                 System.IO.File.WriteAllLines(FilePath, new string[]
                 {
-                    "WidgetVisible=" + (WidgetVisible ? "1" : "0"),
+                    "WidgetMode=" + WidgetMode,
                     "WidgetOnTop=" + (WidgetOnTop ? "1" : "0"),
                     "WidgetLeft=" + WidgetLeft.ToString("R", inv),
-                    "WidgetTop=" + WidgetTop.ToString("R", inv)
+                    "WidgetTop=" + WidgetTop.ToString("R", inv),
+                    "Self=" + Self.ToString(inv),
+                    "SelfPicked=" + (SelfPicked ? "1" : "0"),
+                    "InstallId=" + InstallId
                 });
             }
             catch (Exception) { }
+        }
+    }
+
+    // ------------------------------------------------------------ usage
+    class Usage
+    {
+        public int Cpu = -1, Gpu = -1, Ram = -1;   // percent; -1 = unknown
+        public DateTime At = DateTime.MinValue;    // when it was measured (UTC)
+
+        public bool Fresh { get { return (DateTime.UtcNow - At).TotalSeconds < 5; } }
+    }
+
+    // Measures this PC's CPU, GPU and RAM use the way Task Manager does.
+    static class Stats
+    {
+        [StructLayout(LayoutKind.Explicit, Size = 16)]
+        struct PDH_FMT_COUNTERVALUE
+        {
+            [FieldOffset(0)] public uint CStatus;
+            [FieldOffset(8)] public double Value;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct MEMORYSTATUSEX
+        {
+            public uint dwLength, dwMemoryLoad;
+            public ulong ullTotalPhys, ullAvailPhys, ullTotalPageFile, ullAvailPageFile,
+                ullTotalVirtual, ullAvailVirtual, ullAvailExtendedVirtual;
+        }
+
+        [DllImport("pdh.dll", CharSet = CharSet.Unicode)]
+        static extern uint PdhOpenQuery(string source, IntPtr userData, out IntPtr query);
+        [DllImport("pdh.dll", CharSet = CharSet.Unicode)]
+        static extern uint PdhAddEnglishCounter(IntPtr query, string path, IntPtr userData, out IntPtr counter);
+        [DllImport("pdh.dll")]
+        static extern uint PdhCollectQueryData(IntPtr query);
+        [DllImport("pdh.dll")]
+        static extern uint PdhGetFormattedCounterValue(IntPtr counter, uint format, IntPtr type, out PDH_FMT_COUNTERVALUE value);
+        [DllImport("pdh.dll", CharSet = CharSet.Unicode)]
+        static extern uint PdhGetFormattedCounterArray(IntPtr counter, uint format, ref uint bufferSize, out uint itemCount, IntPtr buffer);
+        [DllImport("kernel32.dll")]
+        static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX status);
+
+        const uint AsDouble = 0x200 | 0x8000;   // PDH_FMT_DOUBLE | PDH_FMT_NOCAP100
+        const uint MoreData = 0x800007D2;       // PDH_MORE_DATA
+        static IntPtr query, cpu, gpu;
+        static bool opened;
+
+        static void Open()
+        {
+            opened = true;
+            if (PdhOpenQuery(null, IntPtr.Zero, out query) != 0)
+            {
+                query = IntPtr.Zero;
+                return;
+            }
+            // Task Manager shows "% Processor Utility"; older Windows only has "% Processor Time".
+            if (PdhAddEnglishCounter(query, @"\Processor Information(_Total)\% Processor Utility", IntPtr.Zero, out cpu) != 0
+                && PdhAddEnglishCounter(query, @"\Processor(_Total)\% Processor Time", IntPtr.Zero, out cpu) != 0)
+                cpu = IntPtr.Zero;
+            // One instance per process and GPU engine. New processes are picked up by themselves.
+            if (PdhAddEnglishCounter(query, @"\GPU Engine(*)\Utilization Percentage", IntPtr.Zero, out gpu) != 0)
+                gpu = IntPtr.Zero;
+            PdhCollectQueryData(query);
+        }
+
+        // Call about once a second, always from the same thread.
+        public static Usage Sample()
+        {
+            Usage u = new Usage();
+            try
+            {
+                if (!opened) Open();
+                if (query != IntPtr.Zero && PdhCollectQueryData(query) == 0)
+                {
+                    u.Cpu = ReadCpu();
+                    u.Gpu = ReadGpu();
+                }
+                u.Ram = ReadRam();
+            }
+            catch (Exception) { }
+            u.At = DateTime.UtcNow;
+            return u;
+        }
+
+        static int ReadCpu()
+        {
+            PDH_FMT_COUNTERVALUE v;
+            if (cpu == IntPtr.Zero || PdhGetFormattedCounterValue(cpu, AsDouble, IntPtr.Zero, out v) != 0 || v.CStatus > 1) return -1;
+            return Percent(v.Value);
+        }
+
+        // Like Task Manager: add up each engine's use across all processes, then take the busiest engine.
+        static int ReadGpu()
+        {
+            uint size = 0, count;
+            if (gpu == IntPtr.Zero || PdhGetFormattedCounterArray(gpu, AsDouble, ref size, out count, IntPtr.Zero) != MoreData || size == 0) return -1;
+            IntPtr buffer = Marshal.AllocHGlobal((int)size);
+            try
+            {
+                if (PdhGetFormattedCounterArray(gpu, AsDouble, ref size, out count, buffer) != 0) return -1;
+                Dictionary<string, double> engines = new Dictionary<string, double>();
+                double busiest = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    // Each item is 24 bytes on 32- and 64-bit: name pointer, status at +8, value at +16.
+                    IntPtr item = new IntPtr(buffer.ToInt64() + i * 24L);
+                    if ((uint)Marshal.ReadInt32(item, 8) > 1) continue;
+                    string name = Marshal.PtrToStringUni(Marshal.ReadIntPtr(item));
+                    int cut = name == null ? -1 : name.IndexOf("_luid_", StringComparison.Ordinal);
+                    if (cut < 0) continue;
+                    string engine = name.Substring(cut);   // drops the "pid_1234" part
+                    double sum;
+                    engines.TryGetValue(engine, out sum);
+                    sum += BitConverter.Int64BitsToDouble(Marshal.ReadInt64(item, 16));
+                    engines[engine] = sum;
+                    if (sum > busiest) busiest = sum;
+                }
+                return Percent(busiest);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        static int ReadRam()
+        {
+            MEMORYSTATUSEX m = new MEMORYSTATUSEX();
+            m.dwLength = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX));
+            if (!GlobalMemoryStatusEx(ref m) || m.ullTotalPhys == 0) return -1;
+            return Percent(100.0 * (m.ullTotalPhys - m.ullAvailPhys) / m.ullTotalPhys);
+        }
+
+        static int Percent(double v)
+        {
+            if (double.IsNaN(v) || v < 0) return 0;
+            return v > 100 ? 100 : (int)Math.Round(v);
+        }
+    }
+
+    // ------------------------------------------------------------ PC-to-PC link
+    // Once a second each PC sends its usage over the local network (UDP port
+    // 47815): a broadcast, so the other PC can find it, plus a direct copy to
+    // every PC it has heard from. That way each widget can show both PCs.
+    // Message: "MSW1|<install id>|<input code of the sender>|<cpu>|<gpu>|<ram>"
+    static class Link
+    {
+        const int Port = 47815;
+        static UdpClient udp;
+        static readonly object Gate = new object();
+        static readonly Dictionary<int, Usage> remote = new Dictionary<int, Usage>();
+        static readonly Dictionary<string, IPEndPoint> peers = new Dictionary<string, IPEndPoint>();
+        static List<IPEndPoint> broadcasts = new List<IPEndPoint>();
+        static DateTime broadcastsAt = DateTime.MinValue;
+
+        public static void Start()
+        {
+            try
+            {
+                udp = new UdpClient(new IPEndPoint(IPAddress.Any, Port));
+                udp.EnableBroadcast = true;
+                // Don't let a direct copy bouncing off a sleeping PC break the next receive.
+                udp.Client.IOControl(unchecked((int)0x9800000C), new byte[4], null);   // SIO_UDP_CONNRESET off
+            }
+            catch (Exception)
+            {
+                udp = null;   // no network or the port is taken: just show this PC
+                return;
+            }
+            Thread reader = new Thread(Receive);
+            reader.IsBackground = true;
+            reader.Start();
+        }
+
+        static void Receive()
+        {
+            while (true)
+            {
+                try
+                {
+                    IPEndPoint from = new IPEndPoint(IPAddress.Any, 0);
+                    byte[] data = udp.Receive(ref from);
+                    if (data.Length <= 200) Handle(Encoding.ASCII.GetString(data), from);
+                }
+                catch (ObjectDisposedException) { return; }
+                catch (Exception) { Thread.Sleep(250); }
+            }
+        }
+
+        static void Handle(string text, IPEndPoint from)
+        {
+            string[] f = text.Split('|');
+            if (f.Length != 6 || f[0] != "MSW1" || f[1].Length == 0 || f[1] == Settings.InstallId) return;
+            int code, cpu, gpu, ram;
+            if (!int.TryParse(f[2], out code) || !int.TryParse(f[3], out cpu)
+                || !int.TryParse(f[4], out gpu) || !int.TryParse(f[5], out ram)) return;
+            Usage u = new Usage { Cpu = Bound(cpu), Gpu = Bound(gpu), Ram = Bound(ram), At = DateTime.UtcNow };
+            lock (Gate)
+            {
+                if (peers.Count >= 16 && !peers.ContainsKey(f[1])) peers.Clear();
+                peers[f[1]] = from;
+                remote[code] = u;
+            }
+        }
+
+        static int Bound(int v)
+        {
+            return v < -1 ? -1 : (v > 100 ? 100 : v);
+        }
+
+        public static void Send(Usage u)
+        {
+            if (udp == null) return;
+            byte[] data = Encoding.ASCII.GetBytes("MSW1|" + Settings.InstallId + "|" + Settings.Self
+                + "|" + u.Cpu + "|" + u.Gpu + "|" + u.Ram);
+            List<IPEndPoint> targets = new List<IPEndPoint>(Broadcasts());
+            lock (Gate) targets.AddRange(peers.Values);
+            foreach (IPEndPoint target in targets)
+            {
+                try { udp.Send(data, data.Length, target); }
+                catch (Exception) { }
+            }
+        }
+
+        // The broadcast address of every network this PC is on, refreshed every 30 s.
+        static List<IPEndPoint> Broadcasts()
+        {
+            if ((DateTime.UtcNow - broadcastsAt).TotalSeconds < 30) return broadcasts;
+            List<IPEndPoint> list = new List<IPEndPoint>();
+            try
+            {
+                foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (nic.OperationalStatus != OperationalStatus.Up || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                    foreach (UnicastIPAddressInformation a in nic.GetIPProperties().UnicastAddresses)
+                    {
+                        if (a.Address.AddressFamily != AddressFamily.InterNetwork || a.IPv4Mask == null) continue;
+                        byte[] ip = a.Address.GetAddressBytes();
+                        byte[] mask = a.IPv4Mask.GetAddressBytes();
+                        if (mask.Length != 4 || mask[3] == 255) continue;   // a single address has no broadcast
+                        for (int i = 0; i < 4; i++) ip[i] = (byte)(ip[i] | ~mask[i]);
+                        list.Add(new IPEndPoint(new IPAddress(ip), Port));
+                    }
+                }
+            }
+            catch (Exception) { }
+            if (list.Count == 0) list.Add(new IPEndPoint(IPAddress.Broadcast, Port));
+            broadcasts = list;
+            broadcastsAt = DateTime.UtcNow;
+            return list;
+        }
+
+        // The latest usage sent by the PC on this input, or null.
+        public static Usage For(int code)
+        {
+            lock (Gate)
+            {
+                Usage u;
+                if (remote.TryGetValue(code, out u)) return u;
+                // The other PC doesn't know its input yet (-1). With two PCs it can only be this one.
+                if (Config.Sources.Length == 2 && Settings.Self >= 0 && code != Settings.Self && remote.TryGetValue(-1, out u)) return u;
+                return null;
+            }
         }
     }
 
@@ -478,6 +893,11 @@ namespace MonitorSwitcher
 
         internal static FrameworkElement MakeIcon(string kind, double size)
         {
+            return MakeIcon(kind, size, Brushes.White);
+        }
+
+        internal static FrameworkElement MakeIcon(string kind, double size, Brush ink)
+        {
             string data;
             switch ((kind ?? "").ToLowerInvariant())
             {
@@ -493,7 +913,7 @@ namespace MonitorSwitcher
             }
             Shapes.Path path = new Shapes.Path
             {
-                Data = Geometry.Parse(data), Stroke = Brushes.White, StrokeThickness = 1.6,
+                Data = Geometry.Parse(data), Stroke = ink, StrokeThickness = 1.6,
                 StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, StrokeLineJoin = PenLineJoin.Round
             };
             Canvas canvas = new Canvas { Width = 24, Height = 24 };
@@ -502,62 +922,101 @@ namespace MonitorSwitcher
         }
     }
 
-    // ------------------------------------------------------------ desktop widget
-    class MiniTile
+    // ------------------------------------------------------------ widget
+    // One PC in the widget: its name, its CPU / GPU / RAM use, and a small bar
+    // under it while it's on screen. Click it to switch the monitor to that PC.
+    class StatTile
     {
         public readonly Source Source;
         public readonly Grid Root;
-        public event Action<MiniTile> Clicked;
+        public event Action<StatTile> Clicked;
 
-        static readonly Color Idle = Color.FromArgb(0x00, 255, 255, 255);
-        static readonly Color Hover = Color.FromArgb(0x1C, 255, 255, 255);
-
-        readonly SolidColorBrush fill = new SolidColorBrush(Idle);
+        readonly Color idle, hover, current;
+        readonly SolidColorBrush fill, ink, hot;
         readonly ScaleTransform scale = new ScaleTransform(1, 1);
-        readonly Border activeLayer;
-        readonly TextBlock label;
-        bool pressed;
+        readonly Border bar;
+        readonly StackPanel numbers;
+        readonly TextBlock[] values = new TextBlock[3];
+        readonly TextBlock note;
+        bool on, pressed, switching;
 
-        public MiniTile(Source source)
+        public StatTile(Source source, Color inkColor, double radius)
         {
             Source = source;
+            // A barely visible fill still catches clicks in the see-through taskbar window.
+            idle = Color.FromArgb(0x01, inkColor.R, inkColor.G, inkColor.B);
+            hover = Color.FromArgb(0x1A, inkColor.R, inkColor.G, inkColor.B);
+            current = Color.FromArgb(0x12, inkColor.R, inkColor.G, inkColor.B);
+            fill = new SolidColorBrush(idle);
+            ink = new SolidColorBrush(inkColor);
+            hot = new SolidColorBrush(inkColor.R < 128 ? Color.FromRgb(0xB4, 0x53, 0x09) : Color.FromRgb(0xFF, 0xC1, 0x4D));
+
             Root = new Grid
             {
-                Width = 80, Height = 54, Cursor = Cursors.Hand, Background = Brushes.Transparent,
+                Height = 40, Cursor = Cursors.Hand, Background = Brushes.Transparent,
                 RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5)
             };
-            Root.Children.Add(new Border { CornerRadius = new CornerRadius(14), Background = fill });
+            Root.Children.Add(new Border { CornerRadius = new CornerRadius(radius), Background = fill });
 
-            activeLayer = new Border
+            StackPanel row = new StackPanel
             {
-                CornerRadius = new CornerRadius(14), Background = Theme.Accent, Opacity = 0,
-                BorderBrush = Theme.White(0x40), BorderThickness = new Thickness(1),
-                Effect = new DropShadowEffect { Color = Theme.Glow, BlurRadius = 18, ShadowDepth = 0, Opacity = 0.55 }
+                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 12, 0)
             };
-            Root.Children.Add(activeLayer);
+            FrameworkElement icon = Tile.MakeIcon(source.Icon, 18, ink);
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(icon);
 
-            StackPanel stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
-            stack.Children.Add(Tile.MakeIcon(source.Icon, 20));
-            label = new TextBlock
+            StackPanel text = new StackPanel { Margin = new Thickness(9, 0, 0, 1), VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock
             {
-                Text = source.Name, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0),
-                MaxWidth = 74, TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            stack.Children.Add(label);
-            Root.Children.Add(stack);
+                Text = source.Name, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = ink,
+                MaxWidth = 170, TextTrimming = TextTrimming.CharacterEllipsis
+            });
 
-            Root.MouseEnter += delegate { Tile.Fade(fill, Hover); };
+            // The numbers keep their space while a note covers them, so the tile never changes width.
+            Grid lower = new Grid();
+            numbers = new StackPanel { Orientation = Orientation.Horizontal };
+            string[] labels = { "CPU", "GPU", "RAM" };
+            for (int i = 0; i < 3; i++)
+            {
+                numbers.Children.Add(new TextBlock
+                {
+                    Text = labels[i], FontSize = 10, Foreground = ink, Opacity = 0.6,
+                    Margin = new Thickness(i == 0 ? 0 : 7, 0, 3, 0), VerticalAlignment = VerticalAlignment.Center
+                });
+                values[i] = new TextBlock
+                {
+                    Text = "\u2013", FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = ink,
+                    Width = 28, VerticalAlignment = VerticalAlignment.Center
+                };
+                numbers.Children.Add(values[i]);
+            }
+            lower.Children.Add(numbers);
+            note = new TextBlock { FontSize = 10.5, Foreground = ink, Opacity = 0.6, Visibility = Visibility.Collapsed };
+            lower.Children.Add(note);
+            text.Children.Add(lower);
+            row.Children.Add(text);
+            Root.Children.Add(row);
+
+            bar = new Border
+            {
+                Width = 16, Height = 3, CornerRadius = new CornerRadius(1.5), Background = Theme.Accent, Opacity = 0,
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
+                Margin = new Thickness(0, 0, 0, 1)
+            };
+            Root.Children.Add(bar);
+
+            Root.MouseEnter += delegate { Tile.Fade(fill, hover); };
             Root.MouseLeave += delegate
             {
                 pressed = false;
-                Tile.Fade(fill, Idle);
+                Tile.Fade(fill, on ? current : idle);
                 Press(1.0);
             };
             Root.MouseLeftButtonDown += delegate(object s, MouseButtonEventArgs e)
             {
                 pressed = true;
-                Press(0.93);
+                Press(0.95);
                 e.Handled = true;
             };
             Root.MouseLeftButtonUp += delegate(object s, MouseButtonEventArgs e)
@@ -569,11 +1028,39 @@ namespace MonitorSwitcher
             };
         }
 
-        public void SetState(bool on, bool switching)
+        public void SetState(bool isOn, bool isSwitching)
         {
-            activeLayer.BeginAnimation(UIElement.OpacityProperty,
+            on = isOn;
+            switching = isSwitching;
+            bar.BeginAnimation(UIElement.OpacityProperty,
                 new DoubleAnimation(on ? 1 : 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = Theme.EaseOut() });
-            label.Text = switching ? "Switching\u2026" : Source.Name;
+            if (!Root.IsMouseOver) Tile.Fade(fill, on ? current : idle);
+            if (switching) ShowNote("Switching\u2026");
+        }
+
+        public void SetUsage(Usage u)
+        {
+            if (switching) return;
+            if (u == null || !u.Fresh)
+            {
+                ShowNote("no usage data");
+                return;
+            }
+            note.Visibility = Visibility.Collapsed;
+            numbers.Visibility = Visibility.Visible;
+            int[] v = { u.Cpu, u.Gpu, u.Ram };
+            for (int i = 0; i < 3; i++)
+            {
+                values[i].Text = v[i] < 0 ? "\u2013" : v[i] + "%";
+                values[i].Foreground = v[i] >= 90 ? hot : ink;
+            }
+        }
+
+        void ShowNote(string text)
+        {
+            note.Text = text;
+            note.Visibility = Visibility.Visible;
+            numbers.Visibility = Visibility.Hidden;
         }
 
         void Press(double to)
@@ -587,11 +1074,92 @@ namespace MonitorSwitcher
         }
     }
 
-    class WidgetWindow : Window
+    // A row of PC tiles. The taskbar widget and the desktop widget each have one.
+    class WidgetRow
     {
-        readonly List<MiniTile> tiles = new List<MiniTile>();
+        public readonly StackPanel Root;
+        readonly List<StatTile> tiles = new List<StatTile>();
         readonly TranslateTransform shift = new TranslateTransform();
         bool busy;
+
+        public WidgetRow(Color ink, double radius)
+        {
+            Root = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, RenderTransform = shift,
+                Background = new SolidColorBrush(Color.FromArgb(0x01, 0, 0, 0))   // catches clicks between the tiles
+            };
+            System.Windows.Documents.TextElement.SetFontFamily(Root, new FontFamily("Segoe UI"));
+            TextOptions.SetTextFormattingMode(Root, TextFormattingMode.Display);
+            for (int i = 0; i < Config.Sources.Length; i++)
+            {
+                StatTile tile = new StatTile(Config.Sources[i], ink, radius);
+                if (i > 0) tile.Root.Margin = new Thickness(4, 0, 0, 0);
+                tile.Clicked += OnClicked;
+                tiles.Add(tile);
+                Root.Children.Add(tile.Root);
+            }
+            Root.MouseRightButtonUp += delegate(object s, MouseButtonEventArgs e)
+            {
+                App.ShowMenuAtCursor();
+                e.Handled = true;
+            };
+            Refresh();
+        }
+
+        public void Refresh()
+        {
+            if (busy) return;
+            foreach (StatTile t in tiles) t.SetState(t.Source.Code == App.LastInput, false);
+            ShowUsage();
+        }
+
+        public void ShowUsage()
+        {
+            foreach (StatTile t in tiles) t.SetUsage(App.UsageFor(t.Source.Code));
+        }
+
+        void OnClicked(StatTile tile)
+        {
+            if (busy) return;
+            busy = true;
+            foreach (StatTile t in tiles) t.SetState(t == tile, t == tile);
+            int code = tile.Source.Code;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool ok = Ddc.SetInput(code);
+                Root.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    busy = false;
+                    if (ok)
+                    {
+                        App.LastInput = code;
+                        App.InputChanged();
+                    }
+                    else
+                    {
+                        Refresh();
+                        Shake();
+                        App.Warn("Couldn\u2019t reach the monitor. Is DDC/CI turned on?");
+                    }
+                }));
+            });
+        }
+
+        void Shake()
+        {
+            DoubleAnimationUsingKeyFrames k = new DoubleAnimationUsingKeyFrames();
+            double[] xs = { -6, 5, -4, 2, -1, 0 };
+            for (int i = 0; i < xs.Length; i++)
+                k.KeyFrames.Add(new EasingDoubleKeyFrame(xs[i], KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(55 * (i + 1)))));
+            shift.BeginAnimation(TranslateTransform.XProperty, k);
+        }
+    }
+
+    // ------------------------------------------------------------ desktop widget
+    class WidgetWindow : Window
+    {
+        public readonly WidgetRow Row;
         bool placed;
         public IntPtr Handle;
 
@@ -610,7 +1178,7 @@ namespace MonitorSwitcher
             UseLayoutRounding = true;
             TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
 
-            Grid shell = new Grid { Margin = new Thickness(18), RenderTransform = shift };
+            Grid shell = new Grid { Margin = new Thickness(18) };
             shell.Children.Add(new Border
             {
                 CornerRadius = new CornerRadius(20), Background = new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x13)),
@@ -625,10 +1193,10 @@ namespace MonitorSwitcher
             };
             shell.Children.Add(card);
 
-            StackPanel row = new StackPanel { Orientation = Orientation.Horizontal };
-            card.Child = row;
+            StackPanel strip = new StackPanel { Orientation = Orientation.Horizontal };
+            card.Child = strip;
 
-            // Grip: drag the widget anywhere (the empty space around the buttons works too).
+            // Grip: drag the widget anywhere (the empty space around the tiles works too).
             Grid grip = new Grid { Width = 18, Cursor = Cursors.SizeAll, Background = Brushes.Transparent };
             Canvas dots = new Canvas { Width = 8, Height = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             for (int r = 0; r < 3; r++)
@@ -642,16 +1210,10 @@ namespace MonitorSwitcher
                 }
             }
             grip.Children.Add(dots);
-            row.Children.Add(grip);
+            strip.Children.Add(grip);
 
-            for (int i = 0; i < Config.Sources.Length; i++)
-            {
-                MiniTile tile = new MiniTile(Config.Sources[i]);
-                if (i > 0) tile.Root.Margin = new Thickness(4, 0, 0, 0);
-                tile.Clicked += OnClicked;
-                tiles.Add(tile);
-                row.Children.Add(tile.Root);
-            }
+            Row = new WidgetRow(Colors.White, 14);
+            strip.Children.Add(Row.Root);
 
             Content = shell;
 
@@ -706,44 +1268,114 @@ namespace MonitorSwitcher
 
         public void Refresh()
         {
-            if (busy) return;
-            foreach (MiniTile t in tiles) t.SetState(t.Source.Code == App.LastInput, false);
+            Row.Refresh();
         }
+    }
 
-        void OnClicked(MiniTile tile)
+    // ------------------------------------------------------------ taskbar widget
+    // Puts a widget row inside the Windows taskbar, just left of the clock and
+    // tray icons. The row lives in a see-through child window of the taskbar, so
+    // it moves and hides together with it. Windows only allows a see-through
+    // child window for apps whose manifest declares Windows 10 support; the
+    // setup adds that manifest.
+    class TaskbarDock
+    {
+        HwndSource source;
+        IntPtr taskbar;
+        Native.RECT placed;
+
+        public bool Docked
         {
-            if (busy) return;
-            busy = true;
-            foreach (MiniTile t in tiles) t.SetState(t == tile, t == tile);
-            int code = tile.Source.Code;
-            ThreadPool.QueueUserWorkItem(delegate
+            get
             {
-                bool ok = Ddc.SetInput(code);
-                Dispatcher.BeginInvoke(new Action(delegate
-                {
-                    busy = false;
-                    if (ok)
-                    {
-                        App.LastInput = code;
-                        App.InputChanged();
-                    }
-                    else
-                    {
-                        Refresh();
-                        Shake();
-                        App.Warn("Couldn\u2019t reach the monitor. Is DDC/CI turned on?");
-                    }
-                }));
-            });
+                return source != null && !source.IsDisposed && Native.IsWindow(source.Handle)
+                    && taskbar == Native.FindWindow("Shell_TrayWnd", null);
+            }
         }
 
-        void Shake()
+        public bool Dock(FrameworkElement content)
         {
-            DoubleAnimationUsingKeyFrames k = new DoubleAnimationUsingKeyFrames();
-            double[] xs = { -6, 5, -4, 2, -1, 0 };
-            for (int i = 0; i < xs.Length; i++)
-                k.KeyFrames.Add(new EasingDoubleKeyFrame(xs[i], KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(55 * (i + 1)))));
-            shift.BeginAnimation(TranslateTransform.XProperty, k);
+            Undock();
+            IntPtr bar = Native.FindWindow("Shell_TrayWnd", null);
+            if (bar == IntPtr.Zero) return false;
+            HwndSourceParameters p = new HwndSourceParameters("Monitor Switcher taskbar widget");
+            p.ParentWindow = bar;
+            p.WindowStyle = Native.WS_CHILD | Native.WS_VISIBLE | Native.WS_CLIPSIBLINGS;
+            p.UsesPerPixelTransparency = true;
+            p.SetPosition(0, 0);
+            p.SetSize(1, 1);
+            try
+            {
+                source = new HwndSource(p);
+            }
+            catch (Exception)
+            {
+                source = null;
+                return false;
+            }
+            source.AddHook(Hook);
+            source.RootVisual = content;
+            taskbar = bar;
+            placed = new Native.RECT();
+            Place();
+            return true;
+        }
+
+        public void Undock()
+        {
+            HwndSource s = source;
+            source = null;
+            taskbar = IntPtr.Zero;
+            if (s == null) return;
+            try
+            {
+                s.RootVisual = null;
+                s.Dispose();
+            }
+            catch (Exception) { }
+        }
+
+        // Sit just left of the tray, vertically centered, above the taskbar's own content.
+        public void Place()
+        {
+            if (!Docked) return;
+            FrameworkElement content = (FrameworkElement)source.RootVisual;
+            Matrix toDevice = source.CompositionTarget.TransformToDevice;
+            content.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            int w = (int)Math.Ceiling(content.DesiredSize.Width * toDevice.M11);
+            int h = (int)Math.Ceiling(content.DesiredSize.Height * toDevice.M22);
+
+            Native.RECT bar, tray;
+            if (!Native.GetWindowRect(taskbar, out bar)) return;
+            int right = bar.Right;
+            IntPtr trayWindow = Native.FindWindowEx(taskbar, IntPtr.Zero, "TrayNotifyWnd", null);
+            if (trayWindow != IntPtr.Zero && Native.GetWindowRect(trayWindow, out tray) && tray.Left > bar.Left && tray.Left <= bar.Right)
+                right = tray.Left;
+            Native.POINT at = new Native.POINT();
+            at.X = right - w - (int)Math.Round(6 * toDevice.M11);
+            at.Y = bar.Top + (bar.Bottom - bar.Top - h) / 2;
+            Native.ScreenToClient(taskbar, ref at);
+
+            // Always re-assert the top of the z-order; only move when something changed.
+            uint flags = Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW;
+            if (placed.Left == at.X && placed.Top == at.Y && placed.Right == at.X + w && placed.Bottom == at.Y + h)
+                flags |= Native.SWP_NOMOVE | Native.SWP_NOSIZE;
+            Native.SetWindowPos(source.Handle, IntPtr.Zero, at.X, at.Y, w, h, flags);
+            placed.Left = at.X;
+            placed.Top = at.Y;
+            placed.Right = at.X + w;
+            placed.Bottom = at.Y + h;
+        }
+
+        static IntPtr Hook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            // Clicking the widget shouldn't take focus away from the app you're using.
+            if (msg == Native.WM_MOUSEACTIVATE)
+            {
+                handled = true;
+                return new IntPtr(Native.MA_NOACTIVATE);
+            }
+            return IntPtr.Zero;
         }
     }
 
@@ -766,6 +1398,21 @@ namespace MonitorSwitcher
         public override Drawing.Color CheckBackground { get { return Accent; } }
         public override Drawing.Color CheckSelectedBackground { get { return Accent; } }
         public override Drawing.Color CheckPressedBackground { get { return Accent; } }
+    }
+
+    // The dark menu, with white arrows on items that open a submenu.
+    class DarkRenderer : Forms.ToolStripProfessionalRenderer
+    {
+        public DarkRenderer() : base(new DarkMenuColors())
+        {
+            RoundedEdges = false;
+        }
+
+        protected override void OnRenderArrow(Forms.ToolStripArrowRenderEventArgs e)
+        {
+            e.ArrowColor = Drawing.Color.White;
+            base.OnRenderArrow(e);
+        }
     }
 
     class SwitcherWindow : Window
@@ -1021,9 +1668,14 @@ namespace MonitorSwitcher
         public static int LastInput = -1;
         static SwitcherWindow window;
         static WidgetWindow widget;
+        static WidgetRow barRow;
+        static readonly TaskbarDock dock = new TaskbarDock();
         static Forms.NotifyIcon tray;
         static Mutex instance;
         static bool polling;
+        static bool lightTaskbar;
+        static DateTime nextDockTry = DateTime.MinValue;
+        static volatile Usage local;
         static readonly uint OwnPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
         const string InstanceName = "Local\\MonitorSwitcher.Instance";
         const string ShowSignalName = "Local\\MonitorSwitcher.Show";
@@ -1044,6 +1696,8 @@ namespace MonitorSwitcher
             }
             // MonitorSwitcher.exe /get   - exit code is the current input
             if (verb == "get") return Ddc.GetInput();
+            // MonitorSwitcher.exe /whoami   - exit code is this PC's input, from the cable type
+            if (verb == "whoami") return Identity.Detect();
 
             bool createdNew;
             instance = new Mutex(true, InstanceName, out createdNew);
@@ -1062,6 +1716,8 @@ namespace MonitorSwitcher
 
             EventWaitHandle showSignal = new EventWaitHandle(false, EventResetMode.AutoReset, ShowSignalName);
             Settings.Load();
+            UpdateSelf();
+            lightTaskbar = LightTaskbar();
             Application app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             window = new SwitcherWindow();
             IntPtr hwnd = window.InitHandle();
@@ -1096,13 +1752,22 @@ namespace MonitorSwitcher
                 }));
             });
 
+            // Measure this PC every second and share it with the other PC.
+            Link.Start();
+            StartStats(app.Dispatcher);
+
             app.Startup += delegate
             {
-                if (Settings.WidgetVisible) widget.ShowWidget();
+                ApplyWidgetMode();
                 StartTimers();
             };
             if (verb == "show") app.Startup += delegate { window.ShowPanel(); };
-            app.Exit += delegate { tray.Visible = false; tray.Dispose(); };
+            app.Exit += delegate
+            {
+                dock.Undock();
+                tray.Visible = false;
+                tray.Dispose();
+            };
             app.Run();
             GC.KeepAlive(instance);
             return 0;
@@ -1153,6 +1818,99 @@ namespace MonitorSwitcher
         {
             if (window != null) window.Refresh();
             if (widget != null) widget.Refresh();
+            if (barRow != null) barRow.Refresh();
+        }
+
+        // Measure this PC every second, send the numbers to the other PC, and update the widget.
+        static void StartStats(Dispatcher ui)
+        {
+            Thread sampler = new Thread(delegate()
+            {
+                while (true)
+                {
+                    DateTime started = DateTime.UtcNow;
+                    Usage u = Stats.Sample();
+                    local = u;
+                    Link.Send(u);
+                    ui.BeginInvoke(new Action(UsageChanged));
+                    int rest = 1000 - (int)(DateTime.UtcNow - started).TotalMilliseconds;
+                    Thread.Sleep(Math.Max(100, rest));
+                }
+            });
+            sampler.IsBackground = true;
+            sampler.Priority = ThreadPriority.BelowNormal;
+            sampler.Start();
+        }
+
+        // Work out which PC this is from the cable, unless the user picked it in the menu.
+        static void UpdateSelf()
+        {
+            if (Settings.SelfPicked) return;
+            int found = Identity.Detect();
+            if (found < 0 || found == Settings.Self) return;
+            Settings.Self = found;
+            Settings.Save();
+        }
+
+        // This PC's tile shows what was measured here; the other PC's tile shows what it sent.
+        public static Usage UsageFor(int code)
+        {
+            return code == Settings.Self ? local : Link.For(code);
+        }
+
+        static void UsageChanged()
+        {
+            if (barRow != null && dock.Docked) barRow.ShowUsage();
+            if (widget.IsVisible) widget.Row.ShowUsage();
+        }
+
+        // Put the widget where the tray menu says: in the taskbar, on the desktop, or nowhere.
+        static void ApplyWidgetMode()
+        {
+            if (Settings.WidgetMode == "taskbar")
+            {
+                if (dock.Docked || DockToTaskbar()) widget.Hide();
+                else widget.ShowWidget();   // no taskbar right now: float until it's back
+            }
+            else
+            {
+                dock.Undock();
+                barRow = null;
+                if (Settings.WidgetMode == "desktop") widget.ShowWidget();
+                else widget.Hide();
+            }
+            PollInput();
+        }
+
+        static bool DockToTaskbar()
+        {
+            if (DateTime.UtcNow < nextDockTry) return false;
+            WidgetRow row = new WidgetRow(lightTaskbar ? Color.FromRgb(0x1B, 0x1B, 0x1B) : Colors.White, 6);
+            if (dock.Dock(row.Root))
+            {
+                barRow = row;
+                return true;
+            }
+            barRow = null;
+            nextDockTry = DateTime.UtcNow.AddSeconds(10);
+            return false;
+        }
+
+        // Re-dock after Explorer restarts, and follow the tray as its icons come and go.
+        static void KeepDocked()
+        {
+            if (dock.Docked)
+            {
+                dock.Place();
+                return;
+            }
+            barRow = null;
+            if (DockToTaskbar())
+            {
+                widget.Hide();
+                PollInput();
+            }
+            else if (!widget.IsVisible) widget.ShowWidget();
         }
 
         public static void Warn(string text)
@@ -1169,9 +1927,14 @@ namespace MonitorSwitcher
 
         static void StartTimers()
         {
-            // Hide the widget while a game or video is fullscreen on its screen.
+            // Every second: keep the taskbar widget docked and in place, or hide the
+            // desktop widget while a game or video is fullscreen on its screen.
             DispatcherTimer guard = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            guard.Tick += delegate { UpdateWidgetVisibility(); };
+            guard.Tick += delegate
+            {
+                if (Settings.WidgetMode == "taskbar") KeepDocked();
+                else if (Settings.WidgetMode == "desktop") UpdateWidgetVisibility();
+            };
             guard.Start();
 
             // Keep the highlight right when another computer switches the monitor.
@@ -1184,16 +1947,45 @@ namespace MonitorSwitcher
             // from this PC, so check right away instead of waiting for the next tick.
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged += delegate
             {
-                widget.Dispatcher.BeginInvoke(new Action(delegate { widget.Place(); PollInput(); }));
+                widget.Dispatcher.BeginInvoke(new Action(delegate
+                {
+                    UpdateSelf();
+                    widget.Place();
+                    dock.Place();
+                    PollInput();
+                    UsageChanged();
+                }));
             };
+
+            // Follow Windows when it switches between light and dark.
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged += delegate
+            {
+                widget.Dispatcher.BeginInvoke(new Action(ThemeMaybeChanged));
+            };
+        }
+
+        static void ThemeMaybeChanged()
+        {
+            bool light = LightTaskbar();
+            if (light == lightTaskbar) return;
+            lightTaskbar = light;
+            tray.Icon = MakeTrayIcon();
+            if (dock.Docked)
+            {
+                nextDockTry = DateTime.MinValue;
+                DockToTaskbar();
+            }
         }
 
         static void UpdateWidgetVisibility()
         {
-            if (!Settings.WidgetVisible) return;
             bool covered = FullscreenAppOnWidgetScreen();
             if (covered && widget.IsVisible) widget.Hide();
-            else if (!covered && !widget.IsVisible) { widget.ShowWidget(); PollInput(); }
+            else if (!covered && !widget.IsVisible)
+            {
+                widget.ShowWidget();
+                PollInput();
+            }
         }
 
         static bool FullscreenAppOnWidgetScreen()
@@ -1220,7 +2012,7 @@ namespace MonitorSwitcher
 
         static void PollInput()
         {
-            if (polling || !widget.IsVisible) return;
+            if (polling || !(dock.Docked || widget.IsVisible)) return;
             polling = true;
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -1247,48 +2039,102 @@ namespace MonitorSwitcher
                 if (e.Button == Forms.MouseButtons.Left) window.Toggle();
             };
             Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
-            menu.Renderer = new Forms.ToolStripProfessionalRenderer(new DarkMenuColors()) { RoundedEdges = false };
-            menu.BackColor = Drawing.Color.FromArgb(32, 32, 38);
-            menu.ForeColor = Drawing.Color.White;
-            menu.Font = new Drawing.Font("Segoe UI", 9.5f);
+            StyleMenu(menu);
             menu.Items.Add("Open switcher", null, delegate { window.ShowPanel(); });
 
-            Forms.ToolStripMenuItem widgetItem = new Forms.ToolStripMenuItem("Show desktop widget") { CheckOnClick = true, Checked = Settings.WidgetVisible };
-            widgetItem.CheckedChanged += delegate
+            // Widget > In the taskbar / On the desktop / Hidden, plus Keep on top for the desktop one.
+            Forms.ToolStripMenuItem widgetMenu = new Forms.ToolStripMenuItem("Widget");
+            StyleMenu(widgetMenu.DropDown);
+            string[] modes = { "taskbar", "desktop", "off" };
+            string[] modeNames = { "In the taskbar", "On the desktop", "Hidden" };
+            List<Forms.ToolStripMenuItem> modeItems = new List<Forms.ToolStripMenuItem>();
+            for (int i = 0; i < modes.Length; i++)
             {
-                Settings.WidgetVisible = widgetItem.Checked;
-                Settings.Save();
-                if (Settings.WidgetVisible) widget.ShowWidget();
-                else widget.Hide();
-            };
-            Forms.ToolStripMenuItem onTopItem = new Forms.ToolStripMenuItem("Keep widget on top") { CheckOnClick = true, Checked = Settings.WidgetOnTop };
-            onTopItem.CheckedChanged += delegate
+                string mode = modes[i];
+                Forms.ToolStripMenuItem modeItem = new Forms.ToolStripMenuItem(modeNames[i]);
+                modeItem.Click += delegate
+                {
+                    Settings.WidgetMode = mode;
+                    Settings.Save();
+                    nextDockTry = DateTime.MinValue;
+                    ApplyWidgetMode();
+                };
+                modeItems.Add(modeItem);
+                widgetMenu.DropDownItems.Add(modeItem);
+            }
+            widgetMenu.DropDownItems.Add(new Forms.ToolStripSeparator());
+            Forms.ToolStripMenuItem onTop = new Forms.ToolStripMenuItem("Keep the desktop widget on top");
+            onTop.Click += delegate
             {
-                Settings.WidgetOnTop = onTopItem.Checked;
+                Settings.WidgetOnTop = !Settings.WidgetOnTop;
                 Settings.Save();
                 widget.Topmost = Settings.WidgetOnTop;
             };
-            menu.Items.Add(widgetItem);
-            menu.Items.Add(onTopItem);
+            widgetMenu.DropDownItems.Add(onTop);
+            widgetMenu.DropDownOpening += delegate
+            {
+                for (int i = 0; i < modes.Length; i++) modeItems[i].Checked = Settings.WidgetMode == modes[i];
+                onTop.Checked = Settings.WidgetOnTop;
+                onTop.Enabled = Settings.WidgetMode == "desktop";
+            };
+            menu.Items.Add(widgetMenu);
+
+            // This PC is > one item per PC. The setup picks it; this fixes a wrong guess.
+            Forms.ToolStripMenuItem selfMenu = new Forms.ToolStripMenuItem("This PC is");
+            StyleMenu(selfMenu.DropDown);
+            List<Forms.ToolStripMenuItem> selfItems = new List<Forms.ToolStripMenuItem>();
+            foreach (Source source in Config.Sources)
+            {
+                int code = source.Code;
+                Forms.ToolStripMenuItem selfItem = new Forms.ToolStripMenuItem(source.Name);
+                selfItem.Click += delegate
+                {
+                    Settings.Self = code;
+                    Settings.SelfPicked = true;
+                    Settings.Save();
+                    UsageChanged();
+                };
+                selfItems.Add(selfItem);
+                selfMenu.DropDownItems.Add(selfItem);
+            }
+            selfMenu.DropDownOpening += delegate
+            {
+                for (int i = 0; i < selfItems.Count; i++) selfItems[i].Checked = Config.Sources[i].Code == Settings.Self;
+            };
+            menu.Items.Add(selfMenu);
+
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("Quit", null, delegate { Application.Current.Shutdown(); });
             tray.ContextMenuStrip = menu;
             tray.Visible = true;
         }
 
-        static Drawing.Icon MakeTrayIcon()
+        static void StyleMenu(Forms.ToolStripDropDown menu)
         {
-            int s = Math.Max(16, Forms.SystemInformation.SmallIconSize.Width);
-            bool lightTaskbar = false;
+            menu.Renderer = new DarkRenderer();
+            menu.BackColor = Drawing.Color.FromArgb(32, 32, 38);
+            menu.ForeColor = Drawing.Color.White;
+            menu.Font = new Drawing.Font("Segoe UI", 9.5f);
+        }
+
+        static bool LightTaskbar()
+        {
             try
             {
                 object v = Microsoft.Win32.Registry.GetValue(
                     @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0);
-                lightTaskbar = v is int && (int)v == 1;
+                return v is int && (int)v == 1;
             }
-            catch (Exception) { }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
 
-            Drawing.Color ink = lightTaskbar ? Drawing.Color.FromArgb(255, 28, 28, 32) : Drawing.Color.White;
+        static Drawing.Icon MakeTrayIcon()
+        {
+            int s = Math.Max(16, Forms.SystemInformation.SmallIconSize.Width);
+            Drawing.Color ink = LightTaskbar() ? Drawing.Color.FromArgb(255, 28, 28, 32) : Drawing.Color.White;
             using (Drawing.Bitmap bmp = new Drawing.Bitmap(s, s, Drawing.Imaging.PixelFormat.Format32bppArgb))
             using (Drawing.Graphics g = Drawing.Graphics.FromImage(bmp))
             using (Drawing.Pen pen = new Drawing.Pen(ink, Math.Max(1.5f, s / 11f)))
@@ -1340,11 +2186,35 @@ $csSource = $csSource.Replace('/*DIRECT*/', $DirectHotkeys.ToString().ToLower())
 Write-Host "Building Monitor Switcher..."
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml, System.Windows.Forms, System.Drawing
 
+# The manifest says the app supports Windows 10 and 11. Windows only allows the
+# see-through window that sits inside the taskbar for apps that declare this.
+$ManifestPath = Join-Path $env:TEMP "MonitorSwitcher.manifest"
+Set-Content -Path $ManifestPath -Encoding ASCII -Value @'
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="MonitorSwitcher"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>
+    </application>
+  </compatibility>
+</assembly>
+'@
+
 $provider = New-Object Microsoft.CSharp.CSharpCodeProvider
 $params = New-Object System.CodeDom.Compiler.CompilerParameters
 $params.GenerateExecutable = $true
 $params.OutputAssembly = $ExePath
-$params.CompilerOptions = "/target:winexe /optimize+"
+$params.CompilerOptions = "/target:winexe /optimize+ /win32manifest:`"$ManifestPath`""
 $references = @(
     "System.dll",
     "System.Core.dll",
@@ -1358,6 +2228,7 @@ $references = @(
 $params.ReferencedAssemblies.AddRange([string[]]$references)
 
 $result = $provider.CompileAssemblyFromSource($params, $csSource)
+Remove-Item $ManifestPath -ErrorAction SilentlyContinue
 $buildErrors = @($result.Errors | Where-Object { -not $_.IsWarning })
 if ($buildErrors.Count -gt 0) {
     Write-Host "`nThe build failed. Send these lines to whoever gave you this script:" -ForegroundColor Red
@@ -1437,26 +2308,48 @@ Get-ChildItem -Path $Desktop -Filter "Switch to *.lnk" -ErrorAction SilentlyCont
 
 # ---------------------------------------------------------------- launch
 $probe = Start-Process -FilePath $ExePath -ArgumentList "/get" -Wait -PassThru
-$here = $Sources | Where-Object { [int]$_.Code -eq $probe.ExitCode } | Select-Object -First 1
+$showing = $Sources | Where-Object { [int]$_.Code -eq $probe.ExitCode } | Select-Object -First 1
+# Which PC is this? The app tells from the cable (HDMI or DisplayPort), even while
+# the monitor shows another PC.
+$found = Start-Process -FilePath $ExePath -ArgumentList "/whoami" -Wait -PassThru
+$here = $Sources | Where-Object { [int]$_.Code -eq $found.ExitCode } | Select-Object -First 1
+$guessed = $false
+$IniPath = Join-Path $AppDir "settings.ini"
+$ini = @(if (Test-Path $IniPath) { Get-Content $IniPath })
+if (-not $here -and $showing -and -not ($ini -match '^Self=[0-9]+$')) {
+    # The cable doesn't tell, so assume the monitor shows this PC while you set it up.
+    $here = $showing
+    $guessed = $true
+    Set-Content -Path $IniPath -Encoding ASCII -Value (@($ini | Where-Object { $_ -notmatch '^Self=' }) + "Self=$($here.Code)")
+}
 Start-Process -FilePath $ExePath -ArgumentList "/show"
 
 Write-Host ""
 Write-Host "Monitor Switcher is running." -ForegroundColor Green
+Write-Host "  The widget sits in the taskbar, left of the clock. It shows each PC's CPU, GPU"
+Write-Host "  and RAM use. Click a PC to switch to it; right-click it for options."
 Write-Host "  Ctrl+Alt+$($HotkeyLetter.ToUpper())        open the switcher (or click the monitor icon in the tray)"
 if ($DirectHotkeys) {
     for ($i = 0; $i -lt $Sources.Count; $i++) {
         Write-Host ("  Ctrl+Alt+{0}        switch to {1}" -f ($i + 1), $Sources[$i].Name)
     }
 }
-Write-Host "  The desktop widget sits in the bottom-right corner: click a computer to switch,"
-Write-Host "  drag it anywhere, right-click it for options."
 Write-Host "  It starts by itself when you sign in. There's also a desktop icon."
-if ($here) {
+Write-Host ""
+Write-Host "If Windows asks whether Monitor Switcher may use your network, click Allow." -ForegroundColor Cyan
+Write-Host "The PCs share their CPU, GPU and RAM use over your home network, so set this up on both." -ForegroundColor Cyan
+if ($here -and -not $guessed) {
+    Write-Host "`nThis computer is '$($here.Name)' (it's on the monitor's $($here.Port) port)."
+} elseif ($here) {
     Write-Host "`nThe monitor is showing input $($probe.ExitCode), so this computer is '$($here.Name)'."
-} elseif ($probe.ExitCode -gt 0) {
-    Write-Host "`nThe monitor reports input $($probe.ExitCode), which isn't in your list. Update the Code numbers at the top and run this again." -ForegroundColor Yellow
-} else {
-    Write-Host "`nCouldn't read the monitor. Check that DDC/CI is turned on in the monitor's own menu." -ForegroundColor Yellow
+    Write-Host "If that's wrong, right-click the widget > This PC is, and pick the right one."
+}
+if (-not $showing) {
+    if ($probe.ExitCode -gt 0) {
+        Write-Host "`nThe monitor reports input $($probe.ExitCode), which isn't in your list. Update the Code numbers at the top and run this again." -ForegroundColor Yellow
+    } else {
+        Write-Host "`nCouldn't read the monitor. Check that DDC/CI is turned on in the monitor's own menu." -ForegroundColor Yellow
+    }
 }
 if ($removedOld -gt 0) { Write-Host "Removed $removedOld old 'Switch to ...' shortcuts from the desktop." }
 Write-Host "Tip: if the tray icon is hidden under the ^ arrow, drag it onto the taskbar to keep it visible."
