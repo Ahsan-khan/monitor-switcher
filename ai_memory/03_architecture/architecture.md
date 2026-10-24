@@ -50,12 +50,12 @@
 | 1–11 | Header comment | How to run it, and what it builds |
 | 13–38 | **Settings** | `$Sources` (Name, Port, Code, Icon, Color), `$Monitor`, `$HotkeyLetter`, `$DirectHotkeys`. The only part the owner edits |
 | 40–59 | Checks | PowerShell 7 relaunch, setting checks, paths, stop the running copy |
-| 62–3197 | `$AppSource` | The C# app (next table) |
-| 3200–3212 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
-| 3214–3266 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
-| 3268–3310 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
-| 3312–3335 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
-| 3337–3385 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
+| 62–3206 | `$AppSource` | The C# app (next table) |
+| 3209–3221 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
+| 3223–3275 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
+| 3277–3319 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
+| 3321–3344 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
+| 3346–3394 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
 
 ### C# inside `$AppSource` (namespace `MonitorSwitcher`)
 | Lines | Class | Role |
@@ -69,24 +69,24 @@
 | 534–540 | `Usage` | One reading: `Cpu`, `Gpu`, `Ram` (percent, -1 = unknown) and when it was taken |
 | 543–669 | `Stats` | Reads CPU / GPU / RAM like Task Manager (PDH counters, `GlobalMemoryStatusEx`) |
 | 676–795 | `Link` | UDP port 47815: send every second, receive, `For(code)` |
-| 798–839 | `Theme` | Accent gradient #6366F1 → #A855F7, glow #8B5CF6, white tints, easing, `InkOn` (black or white text on a color), `Shade` |
-| 841–1023 | `Tile` | Panel tile (136×124) with the "This PC" chip, and `MakeIcon` (desktop / laptop / tv, in any color) |
-| 1028–1067 | `NameTag` | A PC's icon and name in a widget tile; a solid tag in the PC's color on this PC's tile |
-| 1072–1130 | `TileBody` | The numbers part of a widget tile, per style; its `Tag`; metric colors, helpers, `Create(style)` |
-| 1133–1197 | `ClassicBody` | Classic: icon, name, "CPU 23%  GPU 5%  RAM 61%" |
-| 1200–1281 | `BarsBody` | Bars: icon, name, a colored meter per metric |
-| 1284–1384 | `RingsBody` | Rings: name, a ring gauge per metric with the number inside |
-| 1388–1516 | `GraphsBody` | Graphs: icon, name, a 40-second graph per metric with its number above |
-| 1522–1633 | `StatTile` | Widget tile (40 DIP tall): background, hover, click, the tint on this PC's tile, the on-screen bar on another PC's tile; hosts a TileBody |
-| 1636–1716 | `WidgetRow` | A row of StatTiles in one style: click-to-switch, shake, right-click menu |
-| 1719–1841 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement, `UseStyle` |
-| 1849–1948 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
-| 1950–1969 | `DarkMenuColors` | Dark colors for the tray menu |
-| 1972–1984 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
-| 1986–2233 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
-| 2239–2353 | `NameBanner` | The small "You're on AMD" card: `Fill` (color, logo, name), `Flash` (top right, slide in, stay 3 to 5 s depending on input, fade, hide). Click-through |
-| 2359–2537 | `Logo` | The graphics card maker's logo from its own app's icon (`PrivateExtractIcons`), the white-mark cut-out, `logo.png` override |
-| 2540–3195 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the card (`PrepareName`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
+| 798–845 | `Theme` | Accent gradient #6366F1 → #A855F7, glow #8B5CF6, white tints, easing, `InkOn` (black or white text on a color), `Shade` |
+| 847–1029 | `Tile` | Panel tile (136×124) with the "This PC" chip, and `MakeIcon` (desktop / laptop / tv, in any color) |
+| 1034–1073 | `NameTag` | A PC's icon and name in a widget tile; a solid tag in the PC's color on this PC's tile |
+| 1078–1136 | `TileBody` | The numbers part of a widget tile, per style; its `Tag`; metric colors, helpers, `Create(style)` |
+| 1139–1203 | `ClassicBody` | Classic: icon, name, "CPU 23%  GPU 5%  RAM 61%" |
+| 1206–1287 | `BarsBody` | Bars: icon, name, a colored meter per metric |
+| 1290–1390 | `RingsBody` | Rings: name, a ring gauge per metric with the number inside |
+| 1394–1522 | `GraphsBody` | Graphs: icon, name, a 40-second graph per metric with its number above |
+| 1528–1642 | `StatTile` | Widget tile (40 DIP tall): background, hover, click, the tint on this PC's tile, the on-screen bar on another PC's tile; hosts a TileBody |
+| 1645–1725 | `WidgetRow` | A row of StatTiles in one style: click-to-switch, shake, right-click menu |
+| 1728–1850 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement, `UseStyle` |
+| 1858–1957 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
+| 1959–1978 | `DarkMenuColors` | Dark colors for the tray menu |
+| 1981–1993 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
+| 1995–2242 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
+| 2248–2362 | `NameBanner` | The small "You're on AMD" card: `Fill` (color, logo, name), `Flash` (top right, slide in, stay 3 to 5 s depending on input, fade, hide). Click-through |
+| 2368–2546 | `Logo` | The graphics card maker's logo from its own app's icon (`PrivateExtractIcons`), the white-mark cut-out, `logo.png` override |
+| 2549–3204 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the card (`PrepareName`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
 
 ### Other files
 | File | Role |

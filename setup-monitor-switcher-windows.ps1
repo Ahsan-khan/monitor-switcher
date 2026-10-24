@@ -821,9 +821,15 @@ namespace MonitorSwitcher
         // White wins close calls, so red gets white text and bright green gets black.
         public static Color InkOn(Color fill)
         {
-            double l = 0.2126 * Linear(fill.R) + 0.7152 * Linear(fill.G) + 0.0722 * Linear(fill.B);
+            double l = Luminance(fill);
             double onWhite = 1.05 / (l + 0.05), onBlack = (l + 0.05) / 0.05;
             return onBlack > 2 * onWhite ? Color.FromRgb(0x10, 0x10, 0x10) : Colors.White;
+        }
+
+        // How bright a color looks: 0 for black, 1 for white.
+        public static double Luminance(Color c)
+        {
+            return 0.2126 * Linear(c.R) + 0.7152 * Linear(c.G) + 0.0722 * Linear(c.B);
         }
 
         static double Linear(byte v)
@@ -1548,12 +1554,15 @@ namespace MonitorSwitcher
                 RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5)
             };
             Root.Children.Add(new Border { CornerRadius = new CornerRadius(radius), Background = fill });
+            // A bright color makes a loud tile, so the brighter the color, the lighter the tint:
+            // AMD's dark maroon gets all of it, NVIDIA's bright green less than half.
             Color c = source.Color;
+            double k = Math.Min(1, Math.Sqrt(0.073 / Math.Max(0.001, Theme.Luminance(c))));
             tint = new Border
             {
                 CornerRadius = new CornerRadius(radius), BorderThickness = new Thickness(1), Visibility = Visibility.Collapsed,
-                Background = new SolidColorBrush(Color.FromArgb(0x2E, c.R, c.G, c.B)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(0xA0, c.R, c.G, c.B))
+                Background = new SolidColorBrush(Color.FromArgb((byte)Math.Round(0x2E * k), c.R, c.G, c.B)),
+                BorderBrush = new SolidColorBrush(Color.FromArgb((byte)Math.Round(0xA0 * Math.Pow(k, 0.75)), c.R, c.G, c.B))
             };
             Root.Children.Add(tint);
             body = TileBody.Create(style, source, inkColor);
