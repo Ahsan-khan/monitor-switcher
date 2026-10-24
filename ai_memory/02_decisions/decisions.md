@@ -91,3 +91,10 @@ Reasons marked *(inferred)* were worked out from the code and commits on 2026-10
 ## D19. (2026-10-23) Tile layout
 - Two lines per PC: the name, then CPU / GPU / RAM in fixed-width boxes, so the widget never changes width. A small accent bar marks the PC on screen, like the line Windows draws under running apps. Values of 90% or more turn amber. "no usage data" when the other PC hasn't reported in 5 s.
 - The owner hasn't commented on the look yet. They like choosing between options for visual things, so offer alternatives if they want a change.
+
+## D20. (2026-10-23) Draw with the CPU, and hand back unused memory
+- The owner asked how much the app costs and whether it could be lighter. Measured right after a fresh start: the version before session 3 used 51 MB RAM (Task Manager's number) and 13 MB GPU memory; the session 3 build used 65 MB RAM, 20 MB GPU memory and 0.06% CPU.
+- `RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly` keeps the graphics driver out of the app: 65 → 22 MB RAM, GPU memory → 0, and slightly less CPU. `App.TrimSoon()` calls `EmptyWorkingSet` 8 s after startup and after the panel or the tray menu closes: about 13 MB.
+- Result, installed on the AMD PC: **12.9 MB RAM, 0 MB GPU memory, 0.04% CPU**.
+- **Why:** the windows are small, so drawing them with the CPU costs nothing noticeable. The trim only hands back memory the app isn't using; Windows brings pages back if they're needed.
+- **Consequence:** the panel's drop shadow and animations are drawn by the CPU while it animates (not yet checked by eye in this mode). The first panel open after a trim may be a touch slower.

@@ -22,9 +22,10 @@
 - If another app owns one of the hotkeys, a balloon at startup lists the taken ones. `$DirectHotkeys = $false` turns off Ctrl+Alt+1…9 for keyboards that type with AltGr + number.
 - A failed switch shows "Couldn't reach the monitor. Is DDC/CI turned on?" (a balloon, or red text in the panel).
 - Exit codes: `/get` = the current input or -1; `/whoami` = this PC's input or -1; `/switch` = 0 (OK), 1 (failed) or 2 (not a number).
+- Everything is drawn with the CPU (D20), and unused memory is handed back after startup and after the panel or menu closes. Task Manager shows about 13 MB; a long-running copy can show less, because Windows trims it too.
 
 ## Untested
-- The real link between the two PCs (the Nvidia PC needs the new version).
+- The switcher panel (Ctrl+Alt+M) by eye since the switch to CPU drawing (D20).
 - Ctrl+Alt+1 / 2 from the PC the monitor isn't showing. Reading works from there (see `03_architecture/ddc_ci.md`).
 - The new tray submenus and tile clicks, by hand.
 - An Explorer restart (re-docking), a light taskbar, an auto-hiding taskbar, a taskbar on another monitor, mixed DPI.

@@ -11,7 +11,7 @@
 - Each PC runs its own copy of `MonitorSwitcher.exe`. A switch is one DDC/CI command over that PC's own video cable: "set VCP `0x60` (input select) to N". See `ddc_ci.md`.
 - Each PC measures its own CPU, GPU and RAM use every second and sends the numbers to the other PC over the home network. The widget in each taskbar shows both PCs. See `taskbar_and_usage.md`.
 - Each PC learns about the other's input switches by reading VCP `0x60` back from the monitor, not over the network.
-- Everything is in **one file**, `setup-monitor-switcher-windows.ps1` (about 2,360 lines): the settings, the whole C# app as a here-string, and the PowerShell that builds and installs it.
+- Everything is in **one file**, `setup-monitor-switcher-windows.ps1` (about 2,390 lines): the settings, the whole C# app as a here-string, and the PowerShell that builds and installs it.
 
 ## Build and install (what the setup script does)
 1. If started from PowerShell 7, it relaunches itself in Windows PowerShell 5.1, which the build needs.
@@ -46,12 +46,12 @@
 | 1–11 | Header comment | How to run it, and what it builds |
 | 13–36 | **Settings** | `$Sources`, `$Monitor`, `$HotkeyLetter`, `$DirectHotkeys`. The only part the owner edits |
 | 38–57 | Checks | PowerShell 7 relaunch, setting checks, paths, stop the running copy |
-| 60–2169 | `$AppSource` | The C# app (next table) |
-| 2172–2184 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement |
-| 2186–2238 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
-| 2240–2282 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
-| 2284–2307 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
-| 2309–2357 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
+| 60–2199 | `$AppSource` | The C# app (next table) |
+| 2202–2214 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement |
+| 2216–2268 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
+| 2270–2312 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
+| 2314–2337 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
+| 2339–2387 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
 
 ### C# inside `$AppSource` (namespace `MonitorSwitcher`)
 | Lines | Class | Role |
@@ -73,8 +73,8 @@
 | 1281–1380 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
 | 1382–1401 | `DarkMenuColors` | Dark colors for the tray menu |
 | 1404–1416 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
-| 1418–1663 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
-| 1666–2167 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes, timers, polling, the tray menu, theme changes |
+| 1418–1664 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
+| 1667–2197 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes, timers, polling, the tray menu, theme changes |
 
 ### Other files
 | File | Role |

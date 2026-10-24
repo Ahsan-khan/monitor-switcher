@@ -34,6 +34,21 @@ The widget's on-screen text (read through UI Automation) was compared with Windo
 
 How to repeat it: "Check the numbers" in `07_dev_environment`.
 
+The link was then seen working between the real PCs: once the owner installed the session 3 build on the Nvidia PC, its tile on the AMD PC updated every second (CPU 32–51%, GPU 94–100%, RAM 69%, at a time nobody was looking at the Nvidia PC). The high GPU there was not explained yet; compare with Task Manager on that PC.
+
+## What the app costs (2026-10-23, D20)
+Measured with the same script on the AMD PC, after a fresh start (Task Manager's "Memory" = private working set):
+
+| Build | RAM | GPU memory | CPU (whole PC) |
+|---|---|---|---|
+| Before session 3 (desktop widget, no usage) | 51 MB | 13 MB | 0.02% |
+| Session 3 taskbar build | 65 MB | 20 MB | 0.06% |
+| Drawn with the CPU | 22 MB | 0 MB | 0.05% |
+| Unused memory handed back | 18 MB | 12 MB | 0.06% |
+| **Both (installed)** | **12.9 MB** | **0 MB** | **0.04%** |
+
+The usage readings themselves take 1–3 ms a second; the rest of the CPU is redrawing the tiles and the 2 s input poll.
+
 ## The PC-to-PC link (`Link`)
 - UDP port **47815** on all network interfaces. Every second each PC sends `MSW1|<install id>|<its input code>|<cpu>|<gpu>|<ram>` to the broadcast address of every IPv4 network it's on (re-read every 30 s), plus a direct copy to every PC it has heard from.
 - It ignores its own install ID, clamps the values, ignores messages over 200 bytes, and remembers at most 16 senders. No names or other personal data are sent.
