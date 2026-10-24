@@ -33,7 +33,7 @@
 
 **Switch from the widget:** click a tile → it shows "Switching…" → `Ddc.SetInput(code)` runs on a worker thread. On success, `App.LastInput = code` and every view refreshes. On failure, the row shakes and a tray balloon says "Couldn't reach the monitor. Is DDC/CI turned on?"
 
-**The monitor comes over to this PC** (D22): `InputChanged` sees the input change from another PC's code to `Settings.Self` (never on the first reading at startup). `Arrived` starts a 100 ms timer; after 0.5 s, as soon as the mouse or keyboard has been used here since then (`GetLastInputInfo` changed), or at 3 s anyway, `FlashName` slides the small `NameBanner` card ("You're on AMD", with the maker's logo) into the top-right corner for 2.5 s plus a 0.35 s fade. It's cancelled if the input leaves this PC again.
+**The monitor goes to another PC / comes back** (D22): `InputChanged` watches the input change. When it goes to another PC, `PrepareName` makes the card and loads the logo. When it comes back from another PC's code to `Settings.Self` (never on the first reading at startup), `FlashName` shows the small `NameBanner` card in the top-right corner at once. It stays at least 3 s and until 1.5 s after the first mouse or keyboard input (`GetLastInputInfo`), 5 s at most, then fades.
 
 **This PC changes** (cable detection on a display change, or "This PC is" in the menu): `SelfChanged` redraws the tray icon and tooltip and refreshes the rows, which move the tint and name tag (`StatTile.SetSelf`). Picking it in the menu also flashes the card.
 
@@ -41,7 +41,7 @@
 
 **Every second, UI timer:** in taskbar mode, `KeepDocked` re-docks after an Explorer restart, follows the tray's left edge, and re-asserts the z-order. In desktop mode, it hides the widget while a fullscreen app covers its screen.
 
-**Every 2 s** (a 0.5 s timer that polls every 4th tick): `PollInput` re-reads the input while a widget is showing, or while the "You're on" card is turned on (`NameOnSwitch`). While the monitor shows another PC and the card is on, it polls on every tick (0.5 s), so a switch back is noticed quickly. A display change runs `UpdateSelf` (and `SelfChanged` if this PC turned out to be another one), re-places the widgets, polls, and refreshes the usage. A light/dark theme change re-docks the taskbar widget with the matching text color and redraws the tray icon.
+**Every 2 s** (a 250 ms timer that polls every 8th tick): `PollInput` re-reads the input while a widget is showing, or while the "You're on" card is turned on (`NameOnSwitch`). While the monitor shows another PC and the card is on, it polls on every tick (4 times a second), so a switch back is noticed within about 0.3 s. A display change runs `UpdateSelf` (and `SelfChanged` if this PC turned out to be another one), re-places the widgets, polls, and refreshes the usage. A light/dark theme change re-docks the taskbar widget with the matching text color and redraws the tray icon.
 
 ## Code map (`setup-monitor-switcher-windows.ps1`, line numbers as of session 4)
 ### PowerShell
@@ -50,12 +50,12 @@
 | 1–11 | Header comment | How to run it, and what it builds |
 | 13–38 | **Settings** | `$Sources` (Name, Port, Code, Icon, Color), `$Monitor`, `$HotkeyLetter`, `$DirectHotkeys`. The only part the owner edits |
 | 40–59 | Checks | PowerShell 7 relaunch, setting checks, paths, stop the running copy |
-| 62–3207 | `$AppSource` | The C# app (next table) |
-| 3210–3222 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
-| 3224–3276 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
-| 3278–3320 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
-| 3322–3345 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
-| 3347–3395 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
+| 62–3197 | `$AppSource` | The C# app (next table) |
+| 3200–3212 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
+| 3214–3266 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
+| 3268–3310 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
+| 3312–3335 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
+| 3337–3385 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
 
 ### C# inside `$AppSource` (namespace `MonitorSwitcher`)
 | Lines | Class | Role |
@@ -64,29 +64,29 @@
 | 113–145 | `Config` | The baked-in settings (placeholders); spare colors for PCs without one; `Config.Self` = this PC's `Source` or null |
 | 148–280 | `Ddc` | Finds the monitor; `SetInput` (3 tries, 80 ms apart), `GetInput` (2 tries, 50 ms apart, low byte), one lock around both; `DeviceName` |
 | 286–374 | `Identity` | Which PC this is, from the cable type (`QueryDisplayConfig`) |
-| 376–443 | `Native` | user32 calls and constants: hotkeys, window styles and positions, monitor info, `GetLastInputInfo` |
-| 446–524 | `Settings` | settings.ini: `WidgetMode`, `WidgetOnTop`, `WidgetLeft`, `WidgetTop`, `Self`, `SelfPicked`, `WidgetStyle`, `NameOnSwitch`, `InstallId` |
-| 527–533 | `Usage` | One reading: `Cpu`, `Gpu`, `Ram` (percent, -1 = unknown) and when it was taken |
-| 536–662 | `Stats` | Reads CPU / GPU / RAM like Task Manager (PDH counters, `GlobalMemoryStatusEx`) |
-| 669–788 | `Link` | UDP port 47815: send every second, receive, `For(code)` |
-| 791–832 | `Theme` | Accent gradient #6366F1 → #A855F7, glow #8B5CF6, white tints, easing, `InkOn` (black or white text on a color), `Shade` |
-| 834–1016 | `Tile` | Panel tile (136×124) with the "This PC" chip, and `MakeIcon` (desktop / laptop / tv, in any color) |
-| 1021–1060 | `NameTag` | A PC's icon and name in a widget tile; a solid tag in the PC's color on this PC's tile |
-| 1065–1123 | `TileBody` | The numbers part of a widget tile, per style; its `Tag`; metric colors, helpers, `Create(style)` |
-| 1126–1190 | `ClassicBody` | Classic: icon, name, "CPU 23%  GPU 5%  RAM 61%" |
-| 1193–1274 | `BarsBody` | Bars: icon, name, a colored meter per metric |
-| 1277–1377 | `RingsBody` | Rings: name, a ring gauge per metric with the number inside |
-| 1381–1509 | `GraphsBody` | Graphs: icon, name, a 40-second graph per metric with its number above |
-| 1515–1626 | `StatTile` | Widget tile (40 DIP tall): background, hover, click, the tint on this PC's tile, the on-screen bar on another PC's tile; hosts a TileBody |
-| 1629–1709 | `WidgetRow` | A row of StatTiles in one style: click-to-switch, shake, right-click menu |
-| 1712–1834 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement, `UseStyle` |
-| 1842–1941 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
-| 1943–1962 | `DarkMenuColors` | Dark colors for the tray menu |
-| 1965–1977 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
-| 1979–2226 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
-| 2232–2336 | `NameBanner` | The small "You're on AMD" card: `Fill` (color, logo, name), `Flash` (top right, slide in, 2.5 s, fade, hide). Click-through |
-| 2342–2520 | `Logo` | The graphics card maker's logo from its own app's icon (`PrivateExtractIcons`), the white-mark cut-out, `logo.png` override |
-| 2523–3205 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the arrival watch (`Arrived`, `CheckArrival`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
+| 376–450 | `Native` | user32 calls and constants: hotkeys, window styles and positions, monitor info, `LastInputTick` (`GetLastInputInfo`) |
+| 453–531 | `Settings` | settings.ini: `WidgetMode`, `WidgetOnTop`, `WidgetLeft`, `WidgetTop`, `Self`, `SelfPicked`, `WidgetStyle`, `NameOnSwitch`, `InstallId` |
+| 534–540 | `Usage` | One reading: `Cpu`, `Gpu`, `Ram` (percent, -1 = unknown) and when it was taken |
+| 543–669 | `Stats` | Reads CPU / GPU / RAM like Task Manager (PDH counters, `GlobalMemoryStatusEx`) |
+| 676–795 | `Link` | UDP port 47815: send every second, receive, `For(code)` |
+| 798–839 | `Theme` | Accent gradient #6366F1 → #A855F7, glow #8B5CF6, white tints, easing, `InkOn` (black or white text on a color), `Shade` |
+| 841–1023 | `Tile` | Panel tile (136×124) with the "This PC" chip, and `MakeIcon` (desktop / laptop / tv, in any color) |
+| 1028–1067 | `NameTag` | A PC's icon and name in a widget tile; a solid tag in the PC's color on this PC's tile |
+| 1072–1130 | `TileBody` | The numbers part of a widget tile, per style; its `Tag`; metric colors, helpers, `Create(style)` |
+| 1133–1197 | `ClassicBody` | Classic: icon, name, "CPU 23%  GPU 5%  RAM 61%" |
+| 1200–1281 | `BarsBody` | Bars: icon, name, a colored meter per metric |
+| 1284–1384 | `RingsBody` | Rings: name, a ring gauge per metric with the number inside |
+| 1388–1516 | `GraphsBody` | Graphs: icon, name, a 40-second graph per metric with its number above |
+| 1522–1633 | `StatTile` | Widget tile (40 DIP tall): background, hover, click, the tint on this PC's tile, the on-screen bar on another PC's tile; hosts a TileBody |
+| 1636–1716 | `WidgetRow` | A row of StatTiles in one style: click-to-switch, shake, right-click menu |
+| 1719–1841 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement, `UseStyle` |
+| 1849–1948 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
+| 1950–1969 | `DarkMenuColors` | Dark colors for the tray menu |
+| 1972–1984 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
+| 1986–2233 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
+| 2239–2353 | `NameBanner` | The small "You're on AMD" card: `Fill` (color, logo, name), `Flash` (top right, slide in, stay 3 to 5 s depending on input, fade, hide). Click-through |
+| 2359–2537 | `Logo` | The graphics card maker's logo from its own app's icon (`PrivateExtractIcons`), the white-mark cut-out, `logo.png` override |
+| 2540–3195 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the card (`PrepareName`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
 
 ### Other files
 | File | Role |

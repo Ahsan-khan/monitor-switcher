@@ -418,6 +418,13 @@ namespace MonitorSwitcher
         [StructLayout(LayoutKind.Sequential)]
         public struct LASTINPUTINFO { public uint cbSize, dwTime; }
 
+        public static uint LastInputTick()
+        {
+            LASTINPUTINFO info = new LASTINPUTINFO();
+            info.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO));
+            return GetLastInputInfo(ref info) ? info.dwTime : 0;
+        }
+
         public const int WM_HOTKEY = 0x0312;
         public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
         public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000, WS_EX_TRANSPARENT = 0x20;
@@ -2307,19 +2314,29 @@ namespace MonitorSwitcher
             Left = area.Right - size.Width + Shadow - FromEdge;
             Top = area.Top - Shadow + FromEdge;
 
-            // Slide in from the right, stay two and a half seconds, then fade away.
+            // Slide in from the right.
             int g = ++generation;
             shell.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)) { EasingFunction = Theme.EaseOut() });
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)) { EasingFunction = Theme.EaseOut() });
             slide.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(36, 0, TimeSpan.FromMilliseconds(320)) { EasingFunction = Theme.EaseOut() });
+                new DoubleAnimation(36, 0, TimeSpan.FromMilliseconds(250)) { EasingFunction = Theme.EaseOut() });
             Show();
 
-            DispatcherTimer stay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2500) };
+            // It shows the moment the switch is noticed, maybe before the monitor has the
+            // picture up. So it stays at least 3 s, and until 1.5 s after you first use the
+            // mouse or keyboard, so you get to see it; 5 s at most. Then it fades away.
+            DateTime shownAt = DateTime.UtcNow, usedAt = DateTime.MaxValue;
+            uint startTick = Native.LastInputTick();
+            DispatcherTimer stay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
             stay.Tick += delegate
             {
+                if (g != generation) { stay.Stop(); return; }
+                DateTime now = DateTime.UtcNow;
+                if (usedAt == DateTime.MaxValue && Native.LastInputTick() != startTick) usedAt = now;
+                double shown = (now - shownAt).TotalSeconds;
+                bool seen = usedAt != DateTime.MaxValue && (now - usedAt).TotalSeconds >= 1.5;
+                if (shown < 5 && !(shown >= 3 && seen)) return;
                 stay.Stop();
-                if (g != generation) return;
                 IEasingFunction easeIn = new CubicEase { EasingMode = EasingMode.EaseIn };
                 DoubleAnimation fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(350)) { EasingFunction = easeIn };
                 fade.Completed += delegate
@@ -2534,9 +2551,6 @@ namespace MonitorSwitcher
         static DateTime nextDockTry = DateTime.MinValue;
         static NameBanner banner;
         static int seenInput = -1;          // the input InputChanged saw last
-        static DispatcherTimer arrival;     // waits for you to touch this PC after a switch to it
-        static DateTime arrivedAt;
-        static uint inputTick;
         static volatile Usage local;
         static readonly uint OwnPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
         const string InstanceName = "Local\\MonitorSwitcher.Instance";
@@ -2707,8 +2721,16 @@ namespace MonitorSwitcher
         {
             if (LastInput != seenInput)
             {
-                // The monitor just came over to this PC from another one.
-                if (seenInput >= 0 && LastInput == Settings.Self) Arrived();
+                if (seenInput >= 0 && LastInput == Settings.Self)
+                {
+                    // The monitor just came over to this PC from another one.
+                    if (Settings.NameOnSwitch) FlashName();
+                }
+                else if (LastInput >= 0 && LastInput != Settings.Self && Settings.NameOnSwitch)
+                {
+                    // It went to another PC: get the card ready for when it comes back.
+                    PrepareName();
+                }
                 seenInput = LastInput;
             }
             if (window != null) window.Refresh();
@@ -2716,56 +2738,24 @@ namespace MonitorSwitcher
             if (barRow != null) barRow.Refresh();
         }
 
-        // After a switch to this PC, show its name as soon as the mouse or keyboard has been
-        // used here, or after 3 seconds anyway. Not in the first half second, while the
-        // monitor brings the picture up.
-        static void Arrived()
-        {
-            if (!Settings.NameOnSwitch || Config.Self == null) return;
-            if (arrival == null)
-            {
-                arrival = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
-                arrival.Tick += delegate { CheckArrival(); };
-            }
-            arrivedAt = DateTime.UtcNow;
-            inputTick = LastInputTick();
-            arrival.Start();
-        }
-
-        static void CheckArrival()
-        {
-            double waited = (DateTime.UtcNow - arrivedAt).TotalSeconds;
-            if (LastInput != Settings.Self)
-            {
-                arrival.Stop();   // switched away again
-                return;
-            }
-            if (waited < 0.5) return;
-            if (LastInputTick() != inputTick || waited >= 3)
-            {
-                arrival.Stop();
-                FlashName();
-            }
-        }
-
-        static uint LastInputTick()
-        {
-            Native.LASTINPUTINFO info = new Native.LASTINPUTINFO();
-            info.cbSize = (uint)Marshal.SizeOf(typeof(Native.LASTINPUTINFO));
-            return Native.GetLastInputInfo(ref info) ? info.dwTime : 0;
-        }
-
-        // "You're on AMD", big, for a couple of seconds.
+        // "You're on AMD" in the top-right corner for a few seconds.
         static void FlashName()
         {
+            if (PrepareName()) banner.Flash(Config.Self);
+        }
+
+        // Make the card and load the logo ahead of time, so it can show at once.
+        static bool PrepareName()
+        {
             Source self = Config.Self;
-            if (self == null) return;
+            if (self == null) return false;
             if (banner == null)
             {
                 banner = new NameBanner();
                 banner.InitHandle();
             }
-            banner.Flash(self);
+            if (!banner.IsVisible) banner.Fill(self);
+            return true;
         }
 
         // This PC turned out to be another one in the list (detected, or picked in the menu).
@@ -2914,15 +2904,15 @@ namespace MonitorSwitcher
 
             // Keep the highlight right when another computer switches the monitor.
             // A DDC read takes a few dozen milliseconds, so every couple of seconds is cheap.
-            // While the monitor shows another PC, check every half second instead, so the
-            // "You're on" card shows soon after a switch back to this PC.
-            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            // While the monitor shows another PC, check four times a second instead (a read
+            // takes about 60 ms), so the "You're on" card shows right after a switch back.
+            DispatcherTimer poll = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             int ticks = 0;
             poll.Tick += delegate
             {
                 ticks++;
                 bool away = Settings.NameOnSwitch && Settings.Self >= 0 && LastInput >= 0 && LastInput != Settings.Self;
-                if (away || ticks % 4 == 0) PollInput();
+                if (away || ticks % 8 == 0) PollInput();
             };
             poll.Start();
 
