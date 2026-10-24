@@ -50,12 +50,12 @@
 | 1–11 | Header comment | How to run it, and what it builds |
 | 13–38 | **Settings** | `$Sources` (Name, Port, Code, Icon, Color), `$Monitor`, `$HotkeyLetter`, `$DirectHotkeys`. The only part the owner edits |
 | 40–59 | Checks | PowerShell 7 relaunch, setting checks, paths, stop the running copy |
-| 62–3206 | `$AppSource` | The C# app (next table) |
-| 3209–3221 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
-| 3223–3275 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
-| 3277–3319 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
-| 3321–3344 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
-| 3346–3394 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
+| 62–3205 | `$AppSource` | The C# app (next table) |
+| 3208–3220 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement (5 arguments per source; a missing Color becomes `""`) |
+| 3222–3274 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
+| 3276–3318 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
+| 3320–3343 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
+| 3345–3393 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
 
 ### C# inside `$AppSource` (namespace `MonitorSwitcher`)
 | Lines | Class | Role |
@@ -77,16 +77,16 @@
 | 1206–1287 | `BarsBody` | Bars: icon, name, a colored meter per metric |
 | 1290–1390 | `RingsBody` | Rings: name, a ring gauge per metric with the number inside |
 | 1394–1522 | `GraphsBody` | Graphs: icon, name, a 40-second graph per metric with its number above |
-| 1528–1642 | `StatTile` | Widget tile (40 DIP tall): background, hover, click, the tint on this PC's tile, the on-screen bar on another PC's tile; hosts a TileBody |
-| 1645–1725 | `WidgetRow` | A row of StatTiles in one style: click-to-switch, shake, right-click menu |
-| 1728–1850 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement, `UseStyle` |
-| 1858–1957 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
-| 1959–1978 | `DarkMenuColors` | Dark colors for the tray menu |
-| 1981–1993 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
-| 1995–2242 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
-| 2248–2362 | `NameBanner` | The small "You're on AMD" card: `Fill` (color, logo, name), `Flash` (top right, slide in, stay 3 to 5 s depending on input, fade, hide). Click-through |
-| 2368–2546 | `Logo` | The graphics card maker's logo from its own app's icon (`PrivateExtractIcons`), the white-mark cut-out, `logo.png` override |
-| 2549–3204 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the card (`PrepareName`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
+| 1528–1641 | `StatTile` | Widget tile (40 DIP tall): background, hover, click, the outline on this PC's tile, the on-screen bar on another PC's tile; hosts a TileBody |
+| 1644–1724 | `WidgetRow` | A row of StatTiles in one style: click-to-switch, shake, right-click menu |
+| 1727–1849 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement, `UseStyle` |
+| 1857–1956 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
+| 1958–1977 | `DarkMenuColors` | Dark colors for the tray menu |
+| 1980–1992 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
+| 1994–2241 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
+| 2247–2361 | `NameBanner` | The small "You're on AMD" card: `Fill` (color, logo, name), `Flash` (top right, slide in, stay 3 to 5 s depending on input, fade, hide). Click-through |
+| 2367–2545 | `Logo` | The graphics card maker's logo from its own app's icon (`PrivateExtractIcons`), the white-mark cut-out, `logo.png` override |
+| 2548–3203 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the card (`PrepareName`, `FlashName`), `SelfChanged`, the tray menu and icon, theme changes, `TrimSoon` |
 
 ### Other files
 | File | Role |
