@@ -36,6 +36,5 @@
 - Product name **Monitor Switcher**. Exe `MonitorSwitcher.exe`, C# namespace `MonitorSwitcher`, folder `%LOCALAPPDATA%\MonitorSwitcher`, shortcuts `Monitor Switcher.lnk`.
 - Single-instance names: mutex `Local\MonitorSwitcher.Instance`, event `Local\MonitorSwitcher.Show`.
 - The taskbar widget's window title: `Monitor Switcher taskbar widget` (a child of `Shell_TrayWnd`).
-- The "You're on" card's window title: `Monitor Switcher: this PC` (top-level, click-through, made on first use).
 - Network: UDP port **47815**; messages start with `MSW1|`.
 - The PCs are called **Nvidia** and **AMD** in the UI (renamed from "PC 1" / "PC 2" on 2026-10-21).

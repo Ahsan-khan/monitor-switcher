@@ -1,6 +1,6 @@
 # Roadmap (ideas only; check with the owner)
 
-Done in sessions 1–4: the tray app and panel, direct hotkeys, the desktop widget, the two-PC setup (Nvidia / AMD), faster widget updates, this `ai_memory/` folder, (session 3) the taskbar widget with CPU / GPU / RAM for both PCs and four styles, and (session 4) per-PC colors, the "this PC" tag and the "You're on" card (D22).
+Done in sessions 1–4: the tray app and panel, direct hotkeys, the desktop widget, the two-PC setup (Nvidia / AMD), faster widget updates, this `ai_memory/` folder, (session 3) the taskbar widget with CPU / GPU / RAM for both PCs and four styles, and (session 4) per-PC colors and the "this PC" tag (D22).
 
 ## P1: Finish the taskbar widget
 - Push, then install on the Nvidia PC (the owner runs the README command there and clicks Allow).
@@ -9,7 +9,7 @@ Done in sessions 1–4: the tray app and panel, direct hotkeys, the desktop widg
 - Drop the leftover `*.sh` line from `.gitattributes`.
 
 ## P2: Possible improvements (ask the owner first)
-- If the tag and card aren't enough: a small always-on label in a screen corner (click-through), or a colored edge around the screen. Ask first; both cover a bit of the screen.
+- If the tag isn't enough: a small always-on label in a screen corner, or a colored edge around the screen. Ask first: both cover a bit of the screen, and the owner turned down a pop-up card.
 - A way to type the other PC's address, for networks where broadcasts don't get through.
 - Show the usage in the big panel too.
 - More numbers if wanted: GPU memory (`GPU Adapter Memory` counters), CPU or GPU temperature (needs vendor tools or admin rights, so harder).
