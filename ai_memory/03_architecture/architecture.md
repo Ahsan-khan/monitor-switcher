@@ -11,7 +11,7 @@
 - Each PC runs its own copy of `MonitorSwitcher.exe`. A switch is one DDC/CI command over that PC's own video cable: "set VCP `0x60` (input select) to N". See `ddc_ci.md`.
 - Each PC measures its own CPU, GPU and RAM use every second and sends the numbers to the other PC over the home network. The widget in each taskbar shows both PCs. See `taskbar_and_usage.md`.
 - Each PC learns about the other's input switches by reading VCP `0x60` back from the monitor, not over the network.
-- Everything is in **one file**, `setup-monitor-switcher-windows.ps1` (about 2,390 lines): the settings, the whole C# app as a here-string, and the PowerShell that builds and installs it.
+- Everything is in **one file**, `setup-monitor-switcher-windows.ps1` (about 2,830 lines): the settings, the whole C# app as a here-string, and the PowerShell that builds and installs it.
 
 ## Build and install (what the setup script does)
 1. If started from PowerShell 7, it relaunches itself in Windows PowerShell 5.1, which the build needs.
@@ -46,12 +46,12 @@
 | 1–11 | Header comment | How to run it, and what it builds |
 | 13–36 | **Settings** | `$Sources`, `$Monitor`, `$HotkeyLetter`, `$DirectHotkeys`. The only part the owner edits |
 | 38–57 | Checks | PowerShell 7 relaunch, setting checks, paths, stop the running copy |
-| 60–2199 | `$AppSource` | The C# app (next table) |
-| 2202–2214 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement |
-| 2216–2268 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
-| 2270–2312 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
-| 2314–2337 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
-| 2339–2387 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
+| 60–2643 | `$AppSource` | The C# app (next table) |
+| 2646–2658 | Fill-in | `ConvertTo-CSharpString` and the placeholder replacement |
+| 2660–2712 | Build | The manifest, the `CSharpCodeProvider` compile, and the error report |
+| 2714–2756 | App icon | Draws the 256 px icon and writes it as a PNG-in-ICO file |
+| 2758–2781 | Shortcuts | Desktop, Start menu, Startup; removes old ControlMyMonitor shortcuts |
+| 2783–2831 | Launch | `/get` and `/whoami`, the `Self` fallback, start with `/show`, summary text |
 
 ### C# inside `$AppSource` (namespace `MonitorSwitcher`)
 | Lines | Class | Role |
@@ -61,20 +61,25 @@
 | 108–240 | `Ddc` | Finds the monitor; `SetInput` (3 tries, 80 ms apart), `GetInput` (2 tries, 50 ms apart, low byte), one lock around both; `DeviceName` |
 | 246–334 | `Identity` | Which PC this is, from the cable type (`QueryDisplayConfig`) |
 | 336–396 | `Native` | user32 calls and constants: hotkeys, window styles and positions, monitor info |
-| 399–471 | `Settings` | settings.ini: `WidgetMode`, `WidgetOnTop`, `WidgetLeft`, `WidgetTop`, `Self`, `SelfPicked`, `InstallId` |
-| 474–480 | `Usage` | One reading: `Cpu`, `Gpu`, `Ram` (percent, -1 = unknown) and when it was taken |
-| 483–609 | `Stats` | Reads CPU / GPU / RAM like Task Manager (PDH counters, `GlobalMemoryStatusEx`) |
-| 616–735 | `Link` | UDP port 47815: send every second, receive, `For(code)` |
-| 738–759 | `Theme` | Accent gradient #6366F1 → #A855F7, glow #8B5CF6, white tints, easing |
-| 761–923 | `Tile` | Panel tile (136×124) and `MakeIcon` (desktop / laptop / tv, in any color) |
-| 928–1075 | `StatTile` | Widget tile (40 DIP tall): icon, name, CPU / GPU / RAM, accent bar, notes |
-| 1078–1157 | `WidgetRow` | A row of StatTiles: click-to-switch, shake, right-click menu |
-| 1160–1273 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement |
-| 1281–1380 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
-| 1382–1401 | `DarkMenuColors` | Dark colors for the tray menu |
-| 1404–1416 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
-| 1418–1664 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
-| 1667–2197 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes, timers, polling, the tray menu, theme changes |
+| 399–474 | `Settings` | settings.ini: `WidgetMode`, `WidgetOnTop`, `WidgetLeft`, `WidgetTop`, `Self`, `SelfPicked`, `WidgetStyle`, `InstallId` |
+| 477–483 | `Usage` | One reading: `Cpu`, `Gpu`, `Ram` (percent, -1 = unknown) and when it was taken |
+| 486–612 | `Stats` | Reads CPU / GPU / RAM like Task Manager (PDH counters, `GlobalMemoryStatusEx`) |
+| 619–738 | `Link` | UDP port 47815: send every second, receive, `For(code)` |
+| 741–762 | `Theme` | Accent gradient #6366F1 → #A855F7, glow #8B5CF6, white tints, easing |
+| 764–926 | `Tile` | Panel tile (136×124) and `MakeIcon` (desktop / laptop / tv, in any color) |
+| 932–997 | `TileBody` | The numbers part of a widget tile, per style; metric colors, helpers, `Create(style)` |
+| 1000–1060 | `ClassicBody` | Classic: icon, name, "CPU 23%  GPU 5%  RAM 61%" |
+| 1063–1147 | `BarsBody` | Bars: icon, name, a colored meter per metric |
+| 1150–1250 | `RingsBody` | Rings: name, a ring gauge per metric with the number inside |
+| 1254–1385 | `GraphsBody` | Graphs: icon, name, a 40-second graph per metric with its number above |
+| 1389–1476 | `StatTile` | Widget tile (40 DIP tall): background, hover, click, accent bar; hosts a TileBody |
+| 1479–1558 | `WidgetRow` | A row of StatTiles in one style: click-to-switch, shake, right-click menu |
+| 1561–1683 | `WidgetWindow` | The desktop widget: dark card, grip, drag, placement, `UseStyle` |
+| 1691–1790 | `TaskbarDock` | Hosts a WidgetRow inside the taskbar, left of the tray |
+| 1792–1811 | `DarkMenuColors` | Dark colors for the tray menu |
+| 1814–1826 | `DarkRenderer` | The dark menu renderer, with white submenu arrows |
+| 1828–2074 | `SwitcherWindow` | The panel: header with the hotkey hint, tiles, status line, keys, animations |
+| 2077–2641 | `App` | `Main` and the command-line verbs, hotkeys, the usage thread, widget modes and styles, timers, polling, the tray menu, theme changes, `TrimSoon` |
 
 ### Other files
 | File | Role |
@@ -85,7 +90,7 @@
 
 ## What lives on each PC
 - `%LOCALAPPDATA%\MonitorSwitcher\`: `MonitorSwitcher.exe`, `MonitorSwitcher.ico`, `settings.ini`.
-- settings.ini keys: `WidgetMode` (taskbar / desktop / off), `WidgetOnTop`, `WidgetLeft`, `WidgetTop`, `Self` (this PC's input code), `SelfPicked` (1 = picked by hand in the menu), `InstallId` (random; tells the PCs' messages apart). Older installs saved `WidgetVisible` instead of `WidgetMode`; it's still read.
+- settings.ini keys: `WidgetMode` (taskbar / desktop / off), `WidgetOnTop`, `WidgetLeft`, `WidgetTop`, `Self` (this PC's input code), `SelfPicked` (1 = picked by hand in the menu), `WidgetStyle` (classic / bars / rings / graphs), `InstallId` (random; tells the PCs' messages apart). Older installs saved `WidgetVisible` instead of `WidgetMode`; it's still read.
 - Shortcuts named `Monitor Switcher.lnk`: Desktop (`/show`), Start menu Programs (`/show`), Startup (no arguments).
 - Windows Firewall rules, created when the owner clicks Allow (inbound, for the exe's path). On the AMD PC: allowed on Private and Public networks (2026-10-23).
 - Nothing in the registry. The app reads `SystemUsesLightTheme` to pick the text and tray icon colors.

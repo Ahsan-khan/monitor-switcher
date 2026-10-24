@@ -11,11 +11,15 @@
 - The text color follows the taskbar: white on dark, near-black on light (`SystemUsesLightTheme`). A theme change re-docks it with the new color.
 - Desktop mode reuses the same row inside the old floating card (`WidgetWindow`). The tray menu's Widget items set `WidgetMode` and call `ApplyWidgetMode`.
 
-## Tile layout (`StatTile`)
-- An icon, the name (12 px semibold), then "CPU 23%  GPU 5%  RAM 61%". Labels are 10 px at 60% opacity; values are 10.5 px semibold in fixed 28 DIP boxes, so the width never jumps.
-- A 16×3 accent bar under the PC that's on screen (like the line Windows draws under running apps), plus a faint background.
-- Values of 90% or more turn amber (#FFC14D on dark, #B45309 on light).
-- "no usage data" when nothing fresh (under 5 s old) is known, and "Switching…" while switching.
+## Tile layout and styles (`StatTile`, `TileBody`)
+- Every tile shares one frame: a faint background (brighter on hover), a 16×3 accent bar under the PC that's on screen (like the line Windows draws under running apps), and click to switch. It says "no usage data" when nothing fresh (under 5 s old) is known, and "Switching…" while switching. The width never jumps: numbers sit in fixed boxes, and notes cover them without changing the size.
+- The numbers part comes from the style the owner picks (tray menu > Widget style; `WidgetStyle` in settings.ini; Classic by default). Widths per tile, measured from screenshots:
+  - **Classic:** icon, name, then "CPU 23%  GPU 5%  RAM 61%" (labels 10 px at 60% opacity, values 10.5 px semibold in 28 DIP boxes). About 215 DIP.
+  - **Bars:** icon, name, then a 50 DIP meter per metric with its label and number. About 190 DIP.
+  - **Rings:** name, then a 24 DIP ring gauge per metric with the number inside and the label under it. About 150 DIP.
+  - **Graphs:** icon, name, then a 44×19 DIP graph of the last 40 seconds per metric, with its label and number above. About 230 DIP.
+- Metric colors (Bars, Rings, Graphs): CPU blue #60A5FA, GPU purple #C084FC, RAM teal #2DD4BF, with darker shades on a light taskbar. 90% or more turns amber (#FFC14D on dark, #B45309 on light) in every style.
+- All four were captured in the AMD PC's taskbar on 2026-10-23, with live numbers from both PCs.
 
 ## Usage numbers (`Stats`)
 - PDH with English counter paths (`PdhAddEnglishCounter`), so it works in any Windows language. One query, collected every second on a background thread (`App.StartStats`, below-normal priority). A sample takes 1–3 ms. The whole app used about 0.03% of the CPU on the AMD PC.

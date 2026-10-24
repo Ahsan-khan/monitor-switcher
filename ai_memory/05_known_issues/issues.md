@@ -26,6 +26,7 @@
 
 ## Untested
 - The switcher panel (Ctrl+Alt+M) by eye since the switch to CPU drawing (D20).
+- The Bars, Rings and Graphs styles in the desktop widget and on a light taskbar, and picking a style from the menu by hand (D21).
 - Ctrl+Alt+1 / 2 from the PC the monitor isn't showing. Reading works from there (see `03_architecture/ddc_ci.md`).
 - The new tray submenus and tile clicks, by hand.
 - An Explorer restart (re-docking), a light taskbar, an auto-hiding taskbar, a taskbar on another monitor, mixed DPI.

@@ -98,3 +98,9 @@ Reasons marked *(inferred)* were worked out from the code and commits on 2026-10
 - Result, installed on the AMD PC: **12.9 MB RAM, 0 MB GPU memory, 0.04% CPU**.
 - **Why:** the windows are small, so drawing them with the CPU costs nothing noticeable. The trim only hands back memory the app isn't using; Windows brings pages back if they're needed.
 - **Consequence:** the panel's drop shadow and animations are drawn by the CPU while it animates (not yet checked by eye in this mode). The first panel open after a trim may be a touch slower.
+
+## D21. (2026-10-23) Four widget styles, picked from the tray menu
+- The owner asked: "keep this UI and make 3 more, I want to see other designs". Instead of mockups, the three new designs (Bars, Rings, Graphs) were built into the app as styles, so the owner can try each in the real taskbar. Classic (the original) stays the default.
+- Each style is a `TileBody` subclass that only draws the numbers; the tile frame, hover, clicks and accent bar are shared (`StatTile`). Changing the style re-docks the taskbar row and swaps the desktop widget's row (`App.UseStyle`). It's saved as `WidgetStyle` in settings.ini, per PC.
+- Polished after the first screenshots: smaller, lifted rings so the accent bar stays clear of the labels; Graphs got each label and number on a line above its graph instead of on top of it.
+- The owner hasn't picked a favorite yet.

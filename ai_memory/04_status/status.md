@@ -1,7 +1,7 @@
 # Current status (last updated 2026-10-23, end of session 3)
 
 ## In one paragraph
-**Monitor Switcher** works. It's a small Windows tray app, built on each PC by one PowerShell script, that switches the Samsung Odyssey G91F between the **Nvidia** PC (DisplayPort, input 15) and the **AMD** PC (HDMI 1, input 17). Since session 3 the widget sits **inside the taskbar** and shows **CPU, GPU and RAM use for both PCs**; the PCs send each other their numbers over the home network. On the **AMD PC** the new version is installed and running, docked left of the tray, and Windows Firewall allows it. The session 3 taskbar build is **pushed** (`89ce870`), and the owner installed it on the **Nvidia PC**: its numbers now show on the AMD PC, updating every second. Later the app was made lighter (D20: drawn with the CPU, unused memory handed back; 65 → 13 MB RAM, no GPU memory). That lighter build is installed on the AMD PC and committed, but **not pushed yet**, so the Nvidia PC still runs the heavier `89ce870` build.
+**Monitor Switcher** works. It's a small Windows tray app, built on each PC by one PowerShell script, that switches the Samsung Odyssey G91F between the **Nvidia** PC (DisplayPort, input 15) and the **AMD** PC (HDMI 1, input 17). Since session 3 the widget sits **inside the taskbar** and shows **CPU, GPU and RAM use for both PCs**; the PCs send each other their numbers over the home network. On the **AMD PC** the new version is installed and running, docked left of the tray, and Windows Firewall allows it. The session 3 taskbar build is **pushed** (`89ce870`), and the owner installed it on the **Nvidia PC**: its numbers now show on the AMD PC, updating every second. Later the app was made lighter (D20: drawn with the CPU, unused memory handed back; 65 → 13 MB RAM, no GPU memory). That lighter build is installed on the AMD PC and committed, but **not pushed yet**, so the Nvidia PC still runs the heavier `89ce870` build. The widget now also comes in four styles (Classic, Bars, Rings, Graphs; tray menu > Widget style). They're installed here, set to Classic, and not pushed either.
 
 ## What works (verified on the AMD PC, 2026-10-23)
 - **Taskbar widget:** docked left of the tray, with this PC's live CPU / GPU / RAM and the accent bar under the PC on screen. A fake "Nvidia" message sent to the app showed up on the Nvidia tile.
@@ -14,6 +14,7 @@
 
 ## Not verified yet
 - The switcher panel (Ctrl+Alt+M) by eye since the switch to CPU drawing (D20).
+- The new styles in the desktop widget and on a light taskbar, and picking a style from the menu by hand (the screenshots were made by editing settings.ini and restarting).
 - Clicking the new tray menu items (Widget, This PC is) and clicking a tile to switch. They weren't clicked during testing, because a switch hides the AMD PC's screen.
 - An Explorer restart, a light taskbar, an auto-hiding taskbar, a crowded taskbar.
 
@@ -25,10 +26,10 @@
 - `.gitattributes` still has a leftover `*.sh` rule.
 
 ## Owner's to-dos (suggested)
-1. After the lighter build is pushed, run the README install command on the **Nvidia PC** again.
+1. After the lighter build and the styles are pushed, run the README install command on the **Nvidia PC** again.
 2. The Nvidia PC's GPU showed 94–100% while nobody was using it: check Task Manager there for what's using it.
 3. Press Ctrl+Alt+M once on the AMD PC to check the panel still looks normal (it's drawn by the CPU now).
-4. Say if you'd like a different look for the widget.
+4. Pick a widget style: right-click the widget > Widget style.
 
 ## Suggested first thing next session
 1. Ask whether the Nvidia PC is updated and both tiles show numbers on both PCs.

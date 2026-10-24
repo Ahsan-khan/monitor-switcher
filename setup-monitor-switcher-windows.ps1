@@ -408,6 +408,7 @@ namespace MonitorSwitcher
         public static int Self = -1;                   // input code of this PC; the setup writes it
         public static string InstallId = "";           // tells this PC's messages apart from the other PC's
         public static bool SelfPicked;                 // the user picked Self in the menu, so don't detect it
+        public static string WidgetStyle = "classic";  // see TileBody.Styles
 
         public static void Load()
         {
@@ -436,6 +437,7 @@ namespace MonitorSwitcher
                         else if (key == "WidgetTop" && isNumber) WidgetTop = number;
                         else if (key == "Self" && isNumber) Self = (int)number;
                         else if (key == "SelfPicked") SelfPicked = value == "1";
+                        else if (key == "WidgetStyle" && Array.IndexOf(TileBody.Styles, value) >= 0) WidgetStyle = value;
                         else if (key == "InstallId" && value.IndexOf('|') < 0) InstallId = value;
                     }
                 }
@@ -463,6 +465,7 @@ namespace MonitorSwitcher
                     "WidgetTop=" + WidgetTop.ToString("R", inv),
                     "Self=" + Self.ToString(inv),
                     "SelfPicked=" + (SelfPicked ? "1" : "0"),
+                    "WidgetStyle=" + WidgetStyle,
                     "InstallId=" + InstallId
                 });
             }
@@ -923,41 +926,88 @@ namespace MonitorSwitcher
     }
 
     // ------------------------------------------------------------ widget
-    // One PC in the widget: its name, its CPU / GPU / RAM use, and a small bar
-    // under it while it's on screen. Click it to switch the monitor to that PC.
-    class StatTile
+    // The part of a tile that shows the numbers. Each widget style draws it its own
+    // way; the tile around it (background, hover, click, the bar under the PC on
+    // screen) is the same for every style.
+    abstract class TileBody
     {
-        public readonly Source Source;
-        public readonly Grid Root;
-        public event Action<StatTile> Clicked;
+        public FrameworkElement Element;
+        public abstract void Show(Usage u);       // fresh numbers
+        public abstract void Note(string text);   // a few words instead of the numbers, same size
 
-        readonly Color idle, hover, current;
-        readonly SolidColorBrush fill, ink, hot;
-        readonly ScaleTransform scale = new ScaleTransform(1, 1);
-        readonly Border bar;
+        public static readonly string[] Styles = { "classic", "bars", "rings", "graphs" };
+        public static readonly string[] StyleNames = { "Classic", "Bars", "Rings", "Graphs" };
+        protected static readonly string[] Labels = { "CPU", "GPU", "RAM" };
+
+        public static TileBody Create(string style, Source source, Color ink)
+        {
+            if (style == "bars") return new BarsBody(source, ink);
+            if (style == "rings") return new RingsBody(source, ink);
+            if (style == "graphs") return new GraphsBody(source, ink);
+            return new ClassicBody(source, ink);
+        }
+
+        protected static int[] Values(Usage u)
+        {
+            return new int[] { u.Cpu, u.Gpu, u.Ram };
+        }
+
+        // CPU blue, GPU purple, RAM teal. Darker shades on a light taskbar.
+        protected static Color MetricColor(int metric, bool light)
+        {
+            if (metric == 0) return light ? Color.FromRgb(0x25, 0x63, 0xEB) : Color.FromRgb(0x60, 0xA5, 0xFA);
+            if (metric == 1) return light ? Color.FromRgb(0x93, 0x33, 0xEA) : Color.FromRgb(0xC0, 0x84, 0xFC);
+            return light ? Color.FromRgb(0x0D, 0x94, 0x88) : Color.FromRgb(0x2D, 0xD4, 0xBF);
+        }
+
+        // Amber, for 90% or more.
+        protected static Color HotColor(bool light)
+        {
+            return light ? Color.FromRgb(0xB4, 0x53, 0x09) : Color.FromRgb(0xFF, 0xC1, 0x4D);
+        }
+
+        protected static SolidColorBrush Paint(Color c, byte alpha)
+        {
+            SolidColorBrush b = new SolidColorBrush(Color.FromArgb(alpha, c.R, c.G, c.B));
+            b.Freeze();
+            return b;
+        }
+
+        protected static TextBlock MakeText(string text, double size, Brush ink, double opacity, bool bold)
+        {
+            return new TextBlock
+            {
+                Text = text, FontSize = size, Foreground = ink, Opacity = opacity,
+                FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal, VerticalAlignment = VerticalAlignment.Center
+            };
+        }
+
+        protected static TextBlock MakeName(Source source, Brush ink, double size, double maxWidth)
+        {
+            TextBlock name = MakeText(source.Name, size, ink, 1, true);
+            name.MaxWidth = maxWidth;
+            name.TextTrimming = TextTrimming.CharacterEllipsis;
+            return name;
+        }
+
+        protected static string Percent(int v)
+        {
+            return v < 0 ? "\u2013" : v + "%";
+        }
+    }
+
+    // Classic: icon and name, then "CPU 23%  GPU 5%  RAM 61%".
+    class ClassicBody : TileBody
+    {
         readonly StackPanel numbers;
         readonly TextBlock[] values = new TextBlock[3];
         readonly TextBlock note;
-        bool on, pressed, switching;
+        readonly SolidColorBrush ink, hot;
 
-        public StatTile(Source source, Color inkColor, double radius)
+        public ClassicBody(Source source, Color inkColor)
         {
-            Source = source;
-            // A barely visible fill still catches clicks in the see-through taskbar window.
-            idle = Color.FromArgb(0x01, inkColor.R, inkColor.G, inkColor.B);
-            hover = Color.FromArgb(0x1A, inkColor.R, inkColor.G, inkColor.B);
-            current = Color.FromArgb(0x12, inkColor.R, inkColor.G, inkColor.B);
-            fill = new SolidColorBrush(idle);
-            ink = new SolidColorBrush(inkColor);
-            hot = new SolidColorBrush(inkColor.R < 128 ? Color.FromRgb(0xB4, 0x53, 0x09) : Color.FromRgb(0xFF, 0xC1, 0x4D));
-
-            Root = new Grid
-            {
-                Height = 40, Cursor = Cursors.Hand, Background = Brushes.Transparent,
-                RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5)
-            };
-            Root.Children.Add(new Border { CornerRadius = new CornerRadius(radius), Background = fill });
-
+            ink = Paint(inkColor, 255);
+            hot = Paint(HotColor(inkColor.R < 128), 255);
             StackPanel row = new StackPanel
             {
                 Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 12, 0)
@@ -967,36 +1017,405 @@ namespace MonitorSwitcher
             row.Children.Add(icon);
 
             StackPanel text = new StackPanel { Margin = new Thickness(9, 0, 0, 1), VerticalAlignment = VerticalAlignment.Center };
-            text.Children.Add(new TextBlock
-            {
-                Text = source.Name, FontSize = 12, FontWeight = FontWeights.SemiBold, Foreground = ink,
-                MaxWidth = 170, TextTrimming = TextTrimming.CharacterEllipsis
-            });
-
+            text.Children.Add(MakeName(source, ink, 12, 170));
             // The numbers keep their space while a note covers them, so the tile never changes width.
             Grid lower = new Grid();
             numbers = new StackPanel { Orientation = Orientation.Horizontal };
-            string[] labels = { "CPU", "GPU", "RAM" };
             for (int i = 0; i < 3; i++)
             {
-                numbers.Children.Add(new TextBlock
-                {
-                    Text = labels[i], FontSize = 10, Foreground = ink, Opacity = 0.6,
-                    Margin = new Thickness(i == 0 ? 0 : 7, 0, 3, 0), VerticalAlignment = VerticalAlignment.Center
-                });
-                values[i] = new TextBlock
-                {
-                    Text = "\u2013", FontSize = 10.5, FontWeight = FontWeights.SemiBold, Foreground = ink,
-                    Width = 28, VerticalAlignment = VerticalAlignment.Center
-                };
+                TextBlock label = MakeText(Labels[i], 10, ink, 0.6, false);
+                label.Margin = new Thickness(i == 0 ? 0 : 7, 0, 3, 0);
+                numbers.Children.Add(label);
+                values[i] = MakeText("\u2013", 10.5, ink, 1, true);
+                values[i].Width = 28;
                 numbers.Children.Add(values[i]);
             }
             lower.Children.Add(numbers);
-            note = new TextBlock { FontSize = 10.5, Foreground = ink, Opacity = 0.6, Visibility = Visibility.Collapsed };
+            note = MakeText("", 10.5, ink, 0.6, false);
+            note.Visibility = Visibility.Collapsed;
             lower.Children.Add(note);
             text.Children.Add(lower);
             row.Children.Add(text);
-            Root.Children.Add(row);
+            Element = row;
+        }
+
+        public override void Show(Usage u)
+        {
+            note.Visibility = Visibility.Collapsed;
+            numbers.Visibility = Visibility.Visible;
+            int[] v = Values(u);
+            for (int i = 0; i < 3; i++)
+            {
+                values[i].Text = Percent(v[i]);
+                values[i].Foreground = v[i] >= 90 ? hot : ink;
+            }
+        }
+
+        public override void Note(string text)
+        {
+            note.Text = text;
+            note.Visibility = Visibility.Visible;
+            numbers.Visibility = Visibility.Hidden;
+        }
+    }
+
+    // Bars: icon and name, then a small colored meter for each of CPU, GPU and RAM.
+    class BarsBody : TileBody
+    {
+        const double BarWidth = 50;
+        readonly Grid meters;
+        readonly Border[] fills = new Border[3];
+        readonly TextBlock[] values = new TextBlock[3];
+        readonly SolidColorBrush[] colors = new SolidColorBrush[3];
+        readonly SolidColorBrush hot;
+        readonly TextBlock note;
+
+        public BarsBody(Source source, Color inkColor)
+        {
+            bool light = inkColor.R < 128;
+            SolidColorBrush ink = Paint(inkColor, 255);
+            hot = Paint(HotColor(light), 255);
+            StackPanel row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 10, 0)
+            };
+            FrameworkElement icon = Tile.MakeIcon(source.Icon, 16, ink);
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(icon);
+            TextBlock name = MakeName(source, ink, 12, 120);
+            name.Margin = new Thickness(8, 0, 10, 1);
+            row.Children.Add(name);
+
+            Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
+            meters = new Grid();
+            meters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(23) });
+            meters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(BarWidth) });
+            meters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
+            for (int i = 0; i < 3; i++)
+            {
+                meters.RowDefinitions.Add(new RowDefinition { Height = new GridLength(11.5) });
+                colors[i] = Paint(MetricColor(i, light), 255);
+                TextBlock label = MakeText(Labels[i], 8.5, ink, 0.6, false);
+                Grid.SetRow(label, i);
+                meters.Children.Add(label);
+                fills[i] = new Border
+                {
+                    Height = 4, Width = 0, CornerRadius = new CornerRadius(2), Background = colors[i],
+                    HorizontalAlignment = HorizontalAlignment.Left
+                };
+                Border track = new Border
+                {
+                    Height = 4, CornerRadius = new CornerRadius(2), Background = Paint(inkColor, 0x2E),
+                    VerticalAlignment = VerticalAlignment.Center, Child = fills[i]
+                };
+                Grid.SetRow(track, i);
+                Grid.SetColumn(track, 1);
+                meters.Children.Add(track);
+                values[i] = MakeText("\u2013", 9.5, ink, 1, true);
+                values[i].Margin = new Thickness(6, 0, 0, 0);
+                Grid.SetRow(values[i], i);
+                Grid.SetColumn(values[i], 2);
+                meters.Children.Add(values[i]);
+            }
+            area.Children.Add(meters);
+            note = MakeText("", 10.5, ink, 0.6, false);
+            note.Visibility = Visibility.Collapsed;
+            area.Children.Add(note);
+            row.Children.Add(area);
+            Element = row;
+        }
+
+        public override void Show(Usage u)
+        {
+            note.Visibility = Visibility.Collapsed;
+            meters.Visibility = Visibility.Visible;
+            int[] v = Values(u);
+            for (int i = 0; i < 3; i++)
+            {
+                fills[i].Width = BarWidth * Math.Max(0, v[i]) / 100.0;
+                fills[i].Background = v[i] >= 90 ? hot : colors[i];
+                values[i].Text = Percent(v[i]);
+            }
+        }
+
+        public override void Note(string text)
+        {
+            note.Text = text;
+            note.Visibility = Visibility.Visible;
+            meters.Visibility = Visibility.Hidden;
+        }
+    }
+
+    // Rings: the name, then a ring gauge for each of CPU, GPU and RAM with the number inside.
+    class RingsBody : TileBody
+    {
+        const double RingSize = 24, RingWidth = 3;
+        readonly StackPanel gauges;
+        readonly Shapes.Path[] arcs = new Shapes.Path[3];
+        readonly TextBlock[] values = new TextBlock[3];
+        readonly SolidColorBrush[] colors = new SolidColorBrush[3];
+        readonly SolidColorBrush hot;
+        readonly TextBlock note;
+        readonly int[] shown = { -2, -2, -2 };
+
+        public RingsBody(Source source, Color inkColor)
+        {
+            bool light = inkColor.R < 128;
+            SolidColorBrush ink = Paint(inkColor, 255);
+            hot = Paint(HotColor(light), 255);
+            StackPanel row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 10, 0)
+            };
+            TextBlock name = MakeName(source, ink, 12, 120);
+            name.Margin = new Thickness(0, 0, 10, 1);
+            row.Children.Add(name);
+
+            Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
+            gauges = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
+            for (int i = 0; i < 3; i++)
+            {
+                colors[i] = Paint(MetricColor(i, light), 255);
+                StackPanel gauge = new StackPanel { Margin = new Thickness(i == 0 ? 0 : 6, 0, 0, 0) };
+                Grid ring = new Grid { Width = RingSize, Height = RingSize };
+                ring.Children.Add(new Shapes.Ellipse { Stroke = Paint(inkColor, 0x2E), StrokeThickness = RingWidth });
+                arcs[i] = new Shapes.Path
+                {
+                    Stroke = colors[i], StrokeThickness = RingWidth,
+                    StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round
+                };
+                ring.Children.Add(arcs[i]);
+                values[i] = MakeText("\u2013", 8.5, ink, 1, true);
+                values[i].HorizontalAlignment = HorizontalAlignment.Center;
+                ring.Children.Add(values[i]);
+                gauge.Children.Add(ring);
+                TextBlock label = MakeText(Labels[i], 8, ink, 0.6, false);
+                label.HorizontalAlignment = HorizontalAlignment.Center;
+                gauge.Children.Add(label);
+                gauges.Children.Add(gauge);
+            }
+            area.Children.Add(gauges);
+            note = MakeText("", 10.5, ink, 0.6, false);
+            note.Visibility = Visibility.Collapsed;
+            area.Children.Add(note);
+            row.Children.Add(area);
+            Element = row;
+        }
+
+        public override void Show(Usage u)
+        {
+            note.Visibility = Visibility.Collapsed;
+            gauges.Visibility = Visibility.Visible;
+            int[] v = Values(u);
+            for (int i = 0; i < 3; i++)
+            {
+                if (v[i] == shown[i]) continue;
+                shown[i] = v[i];
+                arcs[i].Data = Arc(Math.Max(0, v[i]));
+                arcs[i].Stroke = v[i] >= 90 ? hot : colors[i];
+                values[i].Text = v[i] < 0 ? "\u2013" : v[i].ToString();
+            }
+        }
+
+        public override void Note(string text)
+        {
+            note.Text = text;
+            note.Visibility = Visibility.Visible;
+            gauges.Visibility = Visibility.Hidden;
+        }
+
+        // The part of the ring for this percentage, clockwise from the top.
+        static Geometry Arc(int value)
+        {
+            double r = (RingSize - RingWidth) / 2, c = RingSize / 2;
+            if (value <= 0) return Geometry.Empty;
+            Geometry g;
+            if (value >= 100)
+            {
+                g = new EllipseGeometry(new Point(c, c), r, r);
+            }
+            else
+            {
+                double a = value / 100.0 * 2 * Math.PI;
+                PathFigure f = new PathFigure { StartPoint = new Point(c, c - r), IsClosed = false };
+                f.Segments.Add(new ArcSegment(new Point(c + r * Math.Sin(a), c - r * Math.Cos(a)), new Size(r, r), 0,
+                    a > Math.PI, SweepDirection.Clockwise, true));
+                PathGeometry p = new PathGeometry();
+                p.Figures.Add(f);
+                g = p;
+            }
+            g.Freeze();
+            return g;
+        }
+    }
+
+    // Graphs: icon and name, then a small graph of the last 40 seconds for each of CPU, GPU
+    // and RAM, with its label and number on a line above it.
+    class GraphsBody : TileBody
+    {
+        const int Points = 40;
+        const double W = 44, H = 19;
+        readonly StackPanel cells;
+        readonly Shapes.Path[] areas = new Shapes.Path[3];
+        readonly Shapes.Path[] lines = new Shapes.Path[3];
+        readonly TextBlock[] values = new TextBlock[3];
+        readonly SolidColorBrush[] strokes = new SolidColorBrush[3];
+        readonly SolidColorBrush[] fillBrushes = new SolidColorBrush[3];
+        readonly SolidColorBrush ink, hotStroke, hotFill;
+        readonly List<int>[] history = { new List<int>(), new List<int>(), new List<int>() };
+        readonly TextBlock note;
+        DateTime lastAt = DateTime.MinValue;
+
+        public GraphsBody(Source source, Color inkColor)
+        {
+            bool light = inkColor.R < 128;
+            ink = Paint(inkColor, 255);
+            hotStroke = Paint(HotColor(light), 255);
+            hotFill = Paint(HotColor(light), 0x50);
+            StackPanel row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 10, 0)
+            };
+            FrameworkElement icon = Tile.MakeIcon(source.Icon, 16, ink);
+            icon.VerticalAlignment = VerticalAlignment.Center;
+            row.Children.Add(icon);
+            TextBlock name = MakeName(source, ink, 12, 120);
+            name.Margin = new Thickness(8, 0, 10, 1);
+            row.Children.Add(name);
+
+            Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
+            cells = new StackPanel { Orientation = Orientation.Horizontal };
+            for (int i = 0; i < 3; i++)
+            {
+                Color color = MetricColor(i, light);
+                strokes[i] = Paint(color, 255);
+                fillBrushes[i] = Paint(color, 0x50);
+                StackPanel column = new StackPanel { Width = W, Margin = new Thickness(i == 0 ? 0 : 5, 0, 0, 0) };
+
+                Grid header = new Grid();
+                TextBlock label = MakeText(Labels[i], 8, ink, 0.6, false);
+                label.HorizontalAlignment = HorizontalAlignment.Left;
+                header.Children.Add(label);
+                values[i] = MakeText("\u2013", 9, ink, 1, true);
+                values[i].HorizontalAlignment = HorizontalAlignment.Right;
+                header.Children.Add(values[i]);
+                column.Children.Add(header);
+
+                Grid graph = new Grid
+                {
+                    Width = W, Height = H, Margin = new Thickness(0, 1, 0, 0),
+                    Clip = new RectangleGeometry(new Rect(0, 0, W, H), 3, 3)
+                };
+                graph.Children.Add(new Border { CornerRadius = new CornerRadius(3), Background = Paint(inkColor, 0x14) });
+                areas[i] = new Shapes.Path { Fill = fillBrushes[i] };
+                lines[i] = new Shapes.Path { Stroke = strokes[i], StrokeThickness = 1.2, StrokeLineJoin = PenLineJoin.Round };
+                graph.Children.Add(areas[i]);
+                graph.Children.Add(lines[i]);
+                column.Children.Add(graph);
+                cells.Children.Add(column);
+            }
+            area.Children.Add(cells);
+            note = MakeText("", 10.5, ink, 0.6, false);
+            note.Visibility = Visibility.Collapsed;
+            area.Children.Add(note);
+            row.Children.Add(area);
+            Element = row;
+        }
+
+        public override void Show(Usage u)
+        {
+            note.Visibility = Visibility.Collapsed;
+            cells.Visibility = Visibility.Visible;
+            if (u.At == lastAt) return;   // the same reading again
+            lastAt = u.At;
+            int[] v = Values(u);
+            for (int i = 0; i < 3; i++)
+            {
+                history[i].Add(Math.Max(0, v[i]));
+                if (history[i].Count > Points) history[i].RemoveAt(0);
+                Draw(i);
+                bool hotNow = v[i] >= 90;
+                lines[i].Stroke = hotNow ? hotStroke : strokes[i];
+                areas[i].Fill = hotNow ? hotFill : fillBrushes[i];
+                values[i].Text = Percent(v[i]);
+                values[i].Foreground = hotNow ? hotStroke : ink;
+            }
+        }
+
+        public override void Note(string text)
+        {
+            note.Text = text;
+            note.Visibility = Visibility.Visible;
+            cells.Visibility = Visibility.Hidden;
+        }
+
+        // The newest reading is at the right edge; older ones step to the left.
+        void Draw(int metric)
+        {
+            List<int> h = history[metric];
+            double step = W / (Points - 1);
+            double x0 = W - step * (h.Count - 1);
+            StreamGeometry line = new StreamGeometry();
+            using (StreamGeometryContext c = line.Open())
+            {
+                for (int k = 0; k < h.Count; k++)
+                {
+                    Point p = new Point(x0 + k * step, Y(h[k]));
+                    if (k == 0) c.BeginFigure(p, false, false);
+                    else c.LineTo(p, true, true);
+                }
+            }
+            StreamGeometry fill = new StreamGeometry();
+            using (StreamGeometryContext c = fill.Open())
+            {
+                c.BeginFigure(new Point(x0, H), true, true);
+                for (int k = 0; k < h.Count; k++) c.LineTo(new Point(x0 + k * step, Y(h[k])), false, true);
+                c.LineTo(new Point(W, H), false, true);
+            }
+            line.Freeze();
+            fill.Freeze();
+            lines[metric].Data = line;
+            areas[metric].Data = fill;
+        }
+
+        static double Y(int value)
+        {
+            return H - 1 - (H - 3) * value / 100.0;
+        }
+    }
+
+    // One PC in the widget. Click it to switch the monitor to that PC. The numbers come
+    // from the chosen style (TileBody); a small bar under the tile marks the PC on screen.
+    class StatTile
+    {
+        public readonly Source Source;
+        public readonly Grid Root;
+        public event Action<StatTile> Clicked;
+
+        readonly TileBody body;
+        readonly Color idle, hover, current;
+        readonly SolidColorBrush fill;
+        readonly ScaleTransform scale = new ScaleTransform(1, 1);
+        readonly Border bar;
+        bool on, pressed, switching;
+
+        public StatTile(Source source, Color inkColor, double radius, string style)
+        {
+            Source = source;
+            // A barely visible fill still catches clicks in the see-through taskbar window.
+            idle = Color.FromArgb(0x01, inkColor.R, inkColor.G, inkColor.B);
+            hover = Color.FromArgb(0x1A, inkColor.R, inkColor.G, inkColor.B);
+            current = Color.FromArgb(0x12, inkColor.R, inkColor.G, inkColor.B);
+            fill = new SolidColorBrush(idle);
+
+            Root = new Grid
+            {
+                Height = 40, Cursor = Cursors.Hand, Background = Brushes.Transparent,
+                RenderTransform = scale, RenderTransformOrigin = new Point(0.5, 0.5)
+            };
+            Root.Children.Add(new Border { CornerRadius = new CornerRadius(radius), Background = fill });
+            body = TileBody.Create(style, source, inkColor);
+            Root.Children.Add(body.Element);
 
             bar = new Border
             {
@@ -1035,32 +1454,14 @@ namespace MonitorSwitcher
             bar.BeginAnimation(UIElement.OpacityProperty,
                 new DoubleAnimation(on ? 1 : 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = Theme.EaseOut() });
             if (!Root.IsMouseOver) Tile.Fade(fill, on ? current : idle);
-            if (switching) ShowNote("Switching\u2026");
+            if (switching) body.Note("Switching\u2026");
         }
 
         public void SetUsage(Usage u)
         {
             if (switching) return;
-            if (u == null || !u.Fresh)
-            {
-                ShowNote("no usage data");
-                return;
-            }
-            note.Visibility = Visibility.Collapsed;
-            numbers.Visibility = Visibility.Visible;
-            int[] v = { u.Cpu, u.Gpu, u.Ram };
-            for (int i = 0; i < 3; i++)
-            {
-                values[i].Text = v[i] < 0 ? "\u2013" : v[i] + "%";
-                values[i].Foreground = v[i] >= 90 ? hot : ink;
-            }
-        }
-
-        void ShowNote(string text)
-        {
-            note.Text = text;
-            note.Visibility = Visibility.Visible;
-            numbers.Visibility = Visibility.Hidden;
+            if (u == null || !u.Fresh) body.Note("no usage data");
+            else body.Show(u);
         }
 
         void Press(double to)
@@ -1082,7 +1483,7 @@ namespace MonitorSwitcher
         readonly TranslateTransform shift = new TranslateTransform();
         bool busy;
 
-        public WidgetRow(Color ink, double radius)
+        public WidgetRow(Color ink, double radius, string style)
         {
             Root = new StackPanel
             {
@@ -1093,7 +1494,7 @@ namespace MonitorSwitcher
             TextOptions.SetTextFormattingMode(Root, TextFormattingMode.Display);
             for (int i = 0; i < Config.Sources.Length; i++)
             {
-                StatTile tile = new StatTile(Config.Sources[i], ink, radius);
+                StatTile tile = new StatTile(Config.Sources[i], ink, radius, style);
                 if (i > 0) tile.Root.Margin = new Thickness(4, 0, 0, 0);
                 tile.Clicked += OnClicked;
                 tiles.Add(tile);
@@ -1159,7 +1560,8 @@ namespace MonitorSwitcher
     // ------------------------------------------------------------ desktop widget
     class WidgetWindow : Window
     {
-        public readonly WidgetRow Row;
+        public WidgetRow Row;
+        readonly StackPanel strip;
         bool placed;
         public IntPtr Handle;
 
@@ -1193,7 +1595,7 @@ namespace MonitorSwitcher
             };
             shell.Children.Add(card);
 
-            StackPanel strip = new StackPanel { Orientation = Orientation.Horizontal };
+            strip = new StackPanel { Orientation = Orientation.Horizontal };
             card.Child = strip;
 
             // Grip: drag the widget anywhere (the empty space around the tiles works too).
@@ -1212,7 +1614,7 @@ namespace MonitorSwitcher
             grip.Children.Add(dots);
             strip.Children.Add(grip);
 
-            Row = new WidgetRow(Colors.White, 14);
+            Row = new WidgetRow(Colors.White, 14, Settings.WidgetStyle);
             strip.Children.Add(Row.Root);
 
             Content = shell;
@@ -1269,6 +1671,14 @@ namespace MonitorSwitcher
         public void Refresh()
         {
             Row.Refresh();
+        }
+
+        // Swap in a row drawn in another style.
+        public void UseStyle(string style)
+        {
+            strip.Children.Remove(Row.Root);
+            Row = new WidgetRow(Colors.White, 14, style);
+            strip.Children.Add(Row.Root);
         }
     }
 
@@ -1914,7 +2324,7 @@ namespace MonitorSwitcher
         static bool DockToTaskbar()
         {
             if (DateTime.UtcNow < nextDockTry) return false;
-            WidgetRow row = new WidgetRow(lightTaskbar ? Color.FromRgb(0x1B, 0x1B, 0x1B) : Colors.White, 6);
+            WidgetRow row = new WidgetRow(lightTaskbar ? Color.FromRgb(0x1B, 0x1B, 0x1B) : Colors.White, 6, Settings.WidgetStyle);
             if (dock.Dock(row.Root))
             {
                 barRow = row;
@@ -1923,6 +2333,22 @@ namespace MonitorSwitcher
             barRow = null;
             nextDockTry = DateTime.UtcNow.AddSeconds(10);
             return false;
+        }
+
+        // Redraw both widgets in another style (tray menu > Widget style).
+        static void UseStyle(string style)
+        {
+            Settings.WidgetStyle = style;
+            Settings.Save();
+            widget.UseStyle(style);
+            if (dock.Docked)
+            {
+                nextDockTry = DateTime.MinValue;
+                DockToTaskbar();
+            }
+            InputChanged();
+            UsageChanged();
+            TrimSoon();
         }
 
         // Re-dock after Explorer restarts, and follow the tray as its icons come and go.
@@ -2107,6 +2533,24 @@ namespace MonitorSwitcher
                 onTop.Enabled = Settings.WidgetMode == "desktop";
             };
             menu.Items.Add(widgetMenu);
+
+            // Widget style > Classic / Bars / Rings / Graphs.
+            Forms.ToolStripMenuItem styleMenu = new Forms.ToolStripMenuItem("Widget style");
+            StyleMenu(styleMenu.DropDown);
+            List<Forms.ToolStripMenuItem> styleItems = new List<Forms.ToolStripMenuItem>();
+            for (int i = 0; i < TileBody.Styles.Length; i++)
+            {
+                string style = TileBody.Styles[i];
+                Forms.ToolStripMenuItem styleItem = new Forms.ToolStripMenuItem(TileBody.StyleNames[i]);
+                styleItem.Click += delegate { UseStyle(style); };
+                styleItems.Add(styleItem);
+                styleMenu.DropDownItems.Add(styleItem);
+            }
+            styleMenu.DropDownOpening += delegate
+            {
+                for (int i = 0; i < styleItems.Count; i++) styleItems[i].Checked = Settings.WidgetStyle == TileBody.Styles[i];
+            };
+            menu.Items.Add(styleMenu);
 
             // This PC is > one item per PC. The setup picks it; this fixes a wrong guess.
             Forms.ToolStripMenuItem selfMenu = new Forms.ToolStripMenuItem("This PC is");
