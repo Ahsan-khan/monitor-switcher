@@ -22,12 +22,13 @@
 - All four were captured in the AMD PC's taskbar on 2026-10-23, with live numbers from both PCs.
 - The name tag adds about 1 DIP per tile; the row on the AMD PC (Graphs, 125%) is about 578 px wide.
 
-## Which PC you're on: colors and the name tag (session 4, D22)
+## Which PC you're on: colors, tag and the "You're on" card (session 4, D22)
 - Colors come from `$Sources` (`Color = "#RRGGBB"`): Nvidia `#76B900`, AMD `#8E1622` (maroon; it was `#ED1C24` until the owner asked for a darker red). Text on a color is near-black or white by contrast, with white winning close calls (`Theme.InkOn`): white on AMD maroon, black on Nvidia green.
 - Taskbar and desktop widget: tint (alpha 0x2E) + border (alpha 0xA0) + solid name tag on this PC's tile. Same on light and dark taskbars.
 - Tray icon: the monitor glyph's screen is filled with this PC's color; tooltip "Monitor Switcher: you’re on AMD (Ctrl+Alt+M)" (cut to 63 characters, Windows' limit).
 - Switcher panel: a "This PC" chip in the PC's color at the top right of that tile.
-- No pop-up: a big "You're on AMD" card was tried and removed at the owner's request (D22).
+- `NameBanner`: a small card (about 150×75 DIP) in the PC's color slides in at the top-right corner, 16 DIP from the edges, with the logo of the graphics card's maker and "You're on" over the name. It stays 2.5 s, then fades in 0.35 s. It shows when the monitor comes over from the other PC, 1.5 s or more after that is noticed and on the next mouse or keyboard input. Click-through (`WS_EX_TRANSPARENT`), `WS_EX_NOACTIVATE`, topmost. The window is made on first use and then reused.
+- **The logo** (`Logo` class): taken at runtime from the maker's own app on this PC, so the public repo ships no logo artwork. The maker comes from the name of the graphics card driving the monitor (`EnumDisplayDevices`, for example "AMD Radeon RX 5700 XT"). AMD: the icon of `Program Files/AMD/CNext/CNext/RadeonSoftware.exe`, else `AMD/CIM/Bin64/AMDSoftwareInstaller.exe`. NVIDIA, in order: `NVIDIA Corporation/NVIDIA app/CEF/NVIDIA app.exe`, `Control Panel Client/nvcplui.exe`, `NVIDIA GeForce Experience/NVIDIA GeForce Experience.exe`, `NvContainer/nvcontainer.exe` (untested: there's no NVIDIA card on the AMD PC). If the icon is a white mark on a solid square (AMD's arrow on red), only the mark is kept and drawn in the card's text color; other icons show as a rounded tile. A `logo.png` in `%LOCALAPPDATA%/MonitorSwitcher` wins. With no logo, the card shows the PC's monitor icon.
 
 ## Usage numbers (`Stats`)
 - PDH with English counter paths (`PdhAddEnglishCounter`), so it works in any Windows language. One query, collected every second on a background thread (`App.StartStats`, below-normal priority). A sample takes 1–3 ms. The whole app used about 0.03% of the CPU on the AMD PC.

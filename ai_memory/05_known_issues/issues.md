@@ -7,7 +7,7 @@
 - The PCs must be on the **same network**, and Windows Firewall must allow the app on at least one of them.
 - Usage updates once a second. The other PC's numbers count as missing after 5 s ("no usage data").
 - GPU % is the busiest engine across all graphics adapters (Task Manager's method).
-- The input highlight only updates while a widget is showing. With the widget hidden, it updates when the panel opens.
+- The input is polled every 2 s while a widget is showing or the "You're on" card is on (the default). With both off, it updates only when the panel opens.
 - The panel and the desktop card are always dark. The taskbar row follows the taskbar's light or dark setting.
 - No uninstall, no version number and no update check. A PC updates only when the owner runs the install command again.
 - No automated tests. The compile check in `07_dev_environment` is the main safety net.
@@ -22,6 +22,8 @@
 - If another app owns one of the hotkeys, a balloon at startup lists the taken ones. `$DirectHotkeys = $false` turns off Ctrl+Alt+1…9 for keyboards that type with AltGr + number.
 - A failed switch shows "Couldn't reach the monitor. Is DDC/CI turned on?" (a balloon, or red text in the panel).
 - Exit codes: `/get` = the current input or -1; `/whoami` = this PC's input or -1; `/switch` = 0 (OK), 1 (failed) or 2 (not a number).
+- The "You're on" card (D22) shows only after the input changes from another PC to this one, and only on the first mouse or keyboard input at least 1.5 s after the change is noticed (up to 2 s after the switch, the poll interval). No input within 30 s: no card. It never shows at startup. It sits at the top right of the primary screen. Turn it off in the tray menu (`NameOnSwitch=0`).
+- The card's logo comes from the graphics card maker's app (D22). The NVIDIA app paths are untested; if none exists, the card shows the monitor icon instead. A `logo.png` in the app folder overrides it.
 - The colored tag follows `Self`, which comes from the cable or the "This PC is" menu. If `Self` is wrong, the wrong PC gets the tag; fix it in the menu.
 - A taskbar screenshot taken on a PC shows that PC's own taskbar even while the monitor shows the other PC, so it doesn't prove the owner can see it. `/get` and `GetLastInputInfo` tell you where they are.
 - Everything is drawn with the CPU (D20), and unused memory is handed back after startup and after the panel or menu closes. Task Manager shows about 13 MB; a long-running copy can show less, because Windows trims it too.
@@ -30,7 +32,7 @@
 - The switcher panel (Ctrl+Alt+M) by eye since the switch to CPU drawing (D20).
 - The Bars, Rings and Graphs styles in the desktop widget and on a light taskbar, and picking a style from the menu by hand (D21).
 - Ctrl+Alt+1 / 2 from the PC the monitor isn't showing. Reading works from there (see `03_architecture/ddc_ci.md`).
-- The new tray submenus and tile clicks, by hand, including "This PC is".
+- The new tray submenus and tile clicks, by hand, including "This PC is" (flashes the card) and the card's on/off item.
 - The session 4 build on the Nvidia PC (green tag, black text).
 - An Explorer restart (re-docking), a light taskbar, an auto-hiding taskbar, a taskbar on another monitor, mixed DPI.
 - `$Monitor = "<number>"` on a PC with several monitors. More than two sources.

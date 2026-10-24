@@ -79,6 +79,7 @@ using System.Windows.Threading;
 using Drawing = System.Drawing;
 using Forms = System.Windows.Forms;
 using Shapes = System.Windows.Shapes;
+using Pictures = System.Windows.Media.Imaging;
 
 namespace MonitorSwitcher
 {
@@ -410,9 +411,16 @@ namespace MonitorSwitcher
             public uint dwFlags;
         }
 
+        // When the mouse or keyboard was last used, in milliseconds since Windows started.
+        [DllImport("user32.dll")]
+        public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LASTINPUTINFO { public uint cbSize, dwTime; }
+
         public const int WM_HOTKEY = 0x0312;
         public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
-        public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
+        public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000, WS_EX_TRANSPARENT = 0x20;
         public const uint MONITOR_DEFAULTTONEAREST = 2;
         public const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
         public const int WS_CHILD = 0x40000000, WS_VISIBLE = 0x10000000, WS_CLIPSIBLINGS = 0x04000000;
@@ -448,6 +456,7 @@ namespace MonitorSwitcher
         public static string InstallId = "";           // tells this PC's messages apart from the other PC's
         public static bool SelfPicked;                 // the user picked Self in the menu, so don't detect it
         public static string WidgetStyle = "classic";  // see TileBody.Styles
+        public static bool NameOnSwitch = true;        // show this PC's name big after the monitor switches to it
 
         public static void Load()
         {
@@ -477,6 +486,7 @@ namespace MonitorSwitcher
                         else if (key == "Self" && isNumber) Self = (int)number;
                         else if (key == "SelfPicked") SelfPicked = value == "1";
                         else if (key == "WidgetStyle" && Array.IndexOf(TileBody.Styles, value) >= 0) WidgetStyle = value;
+                        else if (key == "NameOnSwitch") NameOnSwitch = value != "0";
                         else if (key == "InstallId" && value.IndexOf('|') < 0) InstallId = value;
                     }
                 }
@@ -505,6 +515,7 @@ namespace MonitorSwitcher
                     "Self=" + Self.ToString(inv),
                     "SelfPicked=" + (SelfPicked ? "1" : "0"),
                     "WidgetStyle=" + WidgetStyle,
+                    "NameOnSwitch=" + (NameOnSwitch ? "1" : "0"),
                     "InstallId=" + InstallId
                 });
             }
@@ -812,6 +823,11 @@ namespace MonitorSwitcher
         {
             double s = v / 255.0;
             return s <= 0.04045 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4);
+        }
+
+        public static Color Shade(Color c, double factor)
+        {
+            return Color.FromRgb((byte)(c.R * factor), (byte)(c.G * factor), (byte)(c.B * factor));
         }
     }
 
@@ -2209,6 +2225,300 @@ namespace MonitorSwitcher
         }
     }
 
+    // ------------------------------------------------------------ "You're on" card
+    // For a moment after the monitor switches to this PC, a small card in the top-right
+    // corner says which PC this is, in the PC's own color with its graphics card maker's
+    // logo. Clicks go straight through it, and it never takes the focus.
+    class NameBanner : Window
+    {
+        readonly Grid shell;
+        readonly Border card;
+        readonly Grid logoSlot;
+        readonly TextBlock name;
+        readonly SolidColorBrush ink = new SolidColorBrush(Colors.White);
+        readonly TranslateTransform slide = new TranslateTransform();
+        int generation;
+
+        const double Shadow = 24;     // room around the card for its shadow
+        const double FromEdge = 16;   // gap between the card and the screen's corner
+
+        public NameBanner()
+        {
+            WindowStyle = WindowStyle.None;
+            AllowsTransparency = true;
+            Background = Brushes.Transparent;
+            ResizeMode = ResizeMode.NoResize;
+            ShowInTaskbar = false;
+            ShowActivated = false;
+            Topmost = true;
+            SizeToContent = SizeToContent.WidthAndHeight;
+            Title = "Monitor Switcher: this PC";
+            FontFamily = new FontFamily("Segoe UI");
+            UseLayoutRounding = true;
+
+            shell = new Grid { Margin = new Thickness(Shadow), RenderTransform = slide };
+            shell.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(16), Background = new SolidColorBrush(Color.FromRgb(0x10, 0x10, 0x13)),
+                Effect = new DropShadowEffect { BlurRadius = 24, ShadowDepth = 6, Direction = 270, Opacity = 0.45, Color = Colors.Black }
+            });
+            card = new Border
+            {
+                CornerRadius = new CornerRadius(16), BorderBrush = Theme.White(0x33), BorderThickness = new Thickness(1),
+                Padding = new Thickness(16, 12, 22, 13)
+            };
+            shell.Children.Add(card);
+
+            StackPanel row = new StackPanel { Orientation = Orientation.Horizontal };
+            logoSlot = new Grid { Width = 38, Height = 38, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+            row.Children.Add(logoSlot);
+            StackPanel text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            text.Children.Add(new TextBlock { Text = "You\u2019re on", FontSize = 12, Foreground = ink, Opacity = 0.85 });
+            name = new TextBlock { FontSize = 26, FontWeight = FontWeights.Bold, Foreground = ink, Margin = new Thickness(0, -4, 0, 0) };
+            text.Children.Add(name);
+            row.Children.Add(text);
+            card.Child = row;
+            Content = shell;
+        }
+
+        public void InitHandle()
+        {
+            IntPtr h = new WindowInteropHelper(this).EnsureHandle();
+            int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
+            Native.SetWindowLong(h, Native.GWL_EXSTYLE, ex | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | Native.WS_EX_TRANSPARENT);
+        }
+
+        public void Fill(Source source)
+        {
+            Color c = source.Color;
+            card.Background = new LinearGradientBrush(c, Theme.Shade(c, 0.78), 90);
+            ink.Color = Theme.InkOn(c);
+            name.Text = source.Name;
+            logoSlot.Children.Clear();
+            logoSlot.Children.Add(Logo.Make(source, ink, 38));
+        }
+
+        public void Flash(Source source)
+        {
+            Fill(source);
+            shell.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            Size size = shell.DesiredSize;
+            Rect area = SystemParameters.WorkArea;
+            Left = area.Right - size.Width + Shadow - FromEdge;
+            Top = area.Top - Shadow + FromEdge;
+
+            // Slide in from the right, stay two and a half seconds, then fade away.
+            int g = ++generation;
+            shell.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200)) { EasingFunction = Theme.EaseOut() });
+            slide.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(36, 0, TimeSpan.FromMilliseconds(320)) { EasingFunction = Theme.EaseOut() });
+            Show();
+
+            DispatcherTimer stay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(2500) };
+            stay.Tick += delegate
+            {
+                stay.Stop();
+                if (g != generation) return;
+                IEasingFunction easeIn = new CubicEase { EasingMode = EasingMode.EaseIn };
+                DoubleAnimation fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(350)) { EasingFunction = easeIn };
+                fade.Completed += delegate
+                {
+                    if (g != generation) return;
+                    Hide();
+                    App.TrimSoon();
+                };
+                shell.BeginAnimation(UIElement.OpacityProperty, fade);
+                slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(24, TimeSpan.FromMilliseconds(350)) { EasingFunction = easeIn });
+            };
+            stay.Start();
+        }
+    }
+
+    // The logo of the company that made the graphics card driving the monitor (AMD,
+    // NVIDIA), taken from that company's own app on this PC, so no logo files ship with
+    // this script. A logo.png in the app's folder wins. With neither, the card shows the
+    // PC's icon from the list.
+    static class Logo
+    {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DISPLAY_DEVICE
+        {
+            public int cb;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string DeviceName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string DeviceString;
+            public int StateFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string DeviceID;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string DeviceKey;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool EnumDisplayDevices(string device, uint index, ref DISPLAY_DEVICE info, uint flags);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern uint PrivateExtractIcons(string file, int index, int width, int height, IntPtr[] icons, uint[] ids, uint count, uint flags);
+        [DllImport("user32.dll")]
+        static extern bool DestroyIcon(IntPtr icon);
+
+        static bool loaded;
+        static Pictures.BitmapSource picture;
+        static bool mark;   // just the white mark from the maker's icon; drawn in the card's text color
+
+        public static FrameworkElement Make(Source source, Brush ink, double size)
+        {
+            if (!loaded)
+            {
+                loaded = true;
+                picture = Load(out mark);
+            }
+            if (picture == null) return Tile.MakeIcon(source.Icon, size, ink);
+            if (mark)
+            {
+                return new Shapes.Rectangle
+                {
+                    Width = size, Height = size, Fill = ink,
+                    OpacityMask = new ImageBrush(picture) { Stretch = Stretch.Uniform }
+                };
+            }
+            return new Border
+            {
+                Width = size, Height = size, CornerRadius = new CornerRadius(size * 0.22),
+                Background = new ImageBrush(picture) { Stretch = Stretch.Uniform }
+            };
+        }
+
+        static Pictures.BitmapSource Load(out bool isMark)
+        {
+            isMark = false;
+            try
+            {
+                string own = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MonitorSwitcher", "logo.png");
+                if (System.IO.File.Exists(own))
+                {
+                    Pictures.BitmapImage image = new Pictures.BitmapImage();
+                    image.BeginInit();
+                    image.CacheOption = Pictures.BitmapCacheOption.OnLoad;
+                    image.UriSource = new Uri(own);
+                    image.DecodePixelWidth = 128;
+                    image.EndInit();
+                    image.Freeze();
+                    return image;
+                }
+                foreach (string file in MakerApps())
+                {
+                    if (!System.IO.File.Exists(file)) continue;
+                    Pictures.BitmapSource icon = AppIcon(file);
+                    if (icon == null) continue;
+                    Pictures.BitmapSource white = WhiteMark(icon);
+                    isMark = white != null;
+                    return isMark ? white : icon;
+                }
+            }
+            catch (Exception) { }
+            return null;
+        }
+
+        // Apps whose icon is the maker's logo, best first.
+        static List<string> MakerApps()
+        {
+            string maker = (GraphicsCard() ?? "").ToLowerInvariant();
+            string apps = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            List<string> list = new List<string>();
+            if (maker.Contains("amd") || maker.Contains("radeon") || maker.Contains("advanced micro"))
+            {
+                list.Add(System.IO.Path.Combine(apps, "AMD", "CNext", "CNext", "RadeonSoftware.exe"));
+                list.Add(System.IO.Path.Combine(apps, "AMD", "CIM", "Bin64", "AMDSoftwareInstaller.exe"));
+            }
+            else if (maker.Contains("nvidia") || maker.Contains("geforce"))
+            {
+                string nvidia = System.IO.Path.Combine(apps, "NVIDIA Corporation");
+                list.Add(System.IO.Path.Combine(nvidia, "NVIDIA app", "CEF", "NVIDIA app.exe"));
+                list.Add(System.IO.Path.Combine(nvidia, "Control Panel Client", "nvcplui.exe"));
+                list.Add(System.IO.Path.Combine(nvidia, "NVIDIA GeForce Experience", "NVIDIA GeForce Experience.exe"));
+                list.Add(System.IO.Path.Combine(nvidia, "NvContainer", "nvcontainer.exe"));
+            }
+            return list;
+        }
+
+        // The name of the graphics card driving the monitor, like "AMD Radeon RX 5700 XT".
+        static string GraphicsCard()
+        {
+            string monitor = Ddc.DeviceName();
+            string primary = null;
+            DISPLAY_DEVICE d = new DISPLAY_DEVICE();
+            d.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+            for (uint i = 0; EnumDisplayDevices(null, i, ref d, 0); i++)
+            {
+                if (monitor != null && string.Equals(d.DeviceName, monitor, StringComparison.OrdinalIgnoreCase)) return d.DeviceString;
+                if (primary == null && (d.StateFlags & 4) != 0) primary = d.DeviceString;   // DISPLAY_DEVICE_PRIMARY_DEVICE
+                d.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+            }
+            return primary;
+        }
+
+        static Pictures.BitmapSource AppIcon(string file)
+        {
+            IntPtr[] icons = new IntPtr[1];
+            uint[] ids = new uint[1];
+            uint got = PrivateExtractIcons(file, 0, 128, 128, icons, ids, 1, 0);
+            if (got == 0 || got == uint.MaxValue || icons[0] == IntPtr.Zero) return null;
+            try
+            {
+                Pictures.BitmapSource b = Imaging.CreateBitmapSourceFromHIcon(icons[0], Int32Rect.Empty, Pictures.BitmapSizeOptions.FromEmptyOptions());
+                b.Freeze();
+                return b;
+            }
+            finally
+            {
+                DestroyIcon(icons[0]);
+            }
+        }
+
+        // Many maker icons are a white mark on a colored square (AMD's arrow on red). Cut out
+        // just the mark, so the card can draw it in its own text color. Null for other icons.
+        static Pictures.BitmapSource WhiteMark(Pictures.BitmapSource icon)
+        {
+            Pictures.FormatConvertedBitmap bgra = new Pictures.FormatConvertedBitmap(icon, PixelFormats.Bgra32, null, 0);
+            int w = bgra.PixelWidth, h = bgra.PixelHeight, stride = w * 4;
+            byte[] px = new byte[stride * h];
+            bgra.CopyPixels(px, stride, 0);
+            int[] corners = { 0, (w - 1) * 4, (h - 1) * stride, (h - 1) * stride + (w - 1) * 4 };
+            foreach (int c in corners)
+                if (px[c + 3] < 250 || Math.Min(px[c], Math.Min(px[c + 1], px[c + 2])) > 200) return null;   // not a solid, colored square
+
+            byte[] shape = new byte[stride * h];
+            int white = 0, left = w, top = h, right = -1, bottom = -1;
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int i = y * stride + x * 4;
+                    int low = Math.Min(px[i], Math.Min(px[i + 1], px[i + 2]));
+                    int a = (low - 120) * 255 / 135;   // white is fully in, the colored square fully out
+                    if (a <= 0) continue;
+                    if (a > 255) a = 255;
+                    shape[i] = shape[i + 1] = shape[i + 2] = 255;
+                    shape[i + 3] = (byte)a;
+                    if (a < 128) continue;
+                    white++;
+                    if (x < left) left = x;
+                    if (x > right) right = x;
+                    if (y < top) top = y;
+                    if (y > bottom) bottom = y;
+                }
+            }
+            if (white < w * h / 30 || white > w * h / 2) return null;
+            Pictures.BitmapSource all = Pictures.BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, shape, stride);
+            Pictures.CroppedBitmap cut = new Pictures.CroppedBitmap(all, new Int32Rect(left, top, right - left + 1, bottom - top + 1));
+            cut.Freeze();
+            return cut;
+        }
+    }
+
     // ------------------------------------------------------------ app
     static class App
     {
@@ -2222,6 +2532,11 @@ namespace MonitorSwitcher
         static bool polling;
         static bool lightTaskbar;
         static DateTime nextDockTry = DateTime.MinValue;
+        static NameBanner banner;
+        static int seenInput = -1;          // the input InputChanged saw last
+        static DispatcherTimer arrival;     // waits for you to touch this PC after a switch to it
+        static DateTime arrivedAt;
+        static uint inputTick;
         static volatile Usage local;
         static readonly uint OwnPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
         const string InstanceName = "Local\\MonitorSwitcher.Instance";
@@ -2390,9 +2705,68 @@ namespace MonitorSwitcher
 
         public static void InputChanged()
         {
+            if (LastInput != seenInput)
+            {
+                // The monitor just came over to this PC from another one.
+                if (seenInput >= 0 && LastInput == Settings.Self) Arrived();
+                seenInput = LastInput;
+            }
             if (window != null) window.Refresh();
             if (widget != null) widget.Refresh();
             if (barRow != null) barRow.Refresh();
+        }
+
+        // After a switch to this PC, show its name once you use the mouse or keyboard
+        // here. Waiting for that means the picture is back and you're looking.
+        static void Arrived()
+        {
+            if (!Settings.NameOnSwitch || Config.Self == null) return;
+            if (arrival == null)
+            {
+                arrival = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+                arrival.Tick += delegate { CheckArrival(); };
+            }
+            arrivedAt = DateTime.UtcNow;
+            inputTick = LastInputTick();
+            arrival.Start();
+        }
+
+        static void CheckArrival()
+        {
+            double waited = (DateTime.UtcNow - arrivedAt).TotalSeconds;
+            uint tick = LastInputTick();
+            if (LastInput != Settings.Self || waited > 30)
+            {
+                arrival.Stop();   // switched away again, or nobody came
+                return;
+            }
+            // The monitor takes a moment to show the picture; input before that doesn't count.
+            if (waited < 1.5) inputTick = tick;
+            else if (tick != inputTick)
+            {
+                arrival.Stop();
+                FlashName();
+            }
+        }
+
+        static uint LastInputTick()
+        {
+            Native.LASTINPUTINFO info = new Native.LASTINPUTINFO();
+            info.cbSize = (uint)Marshal.SizeOf(typeof(Native.LASTINPUTINFO));
+            return Native.GetLastInputInfo(ref info) ? info.dwTime : 0;
+        }
+
+        // "You're on AMD", big, for a couple of seconds.
+        static void FlashName()
+        {
+            Source self = Config.Self;
+            if (self == null) return;
+            if (banner == null)
+            {
+                banner = new NameBanner();
+                banner.InitHandle();
+            }
+            banner.Flash(self);
         }
 
         // This PC turned out to be another one in the list (detected, or picked in the menu).
@@ -2612,9 +2986,10 @@ namespace MonitorSwitcher
                 && r.Right >= info.rcMonitor.Right && r.Bottom >= info.rcMonitor.Bottom;
         }
 
+        // Read the monitor's input, while a widget shows it or to notice a switch to this PC.
         static void PollInput()
         {
-            if (polling || !(dock.Docked || widget.IsVisible)) return;
+            if (polling || !(dock.Docked || widget.IsVisible || Settings.NameOnSwitch)) return;
             polling = true;
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -2713,6 +3088,7 @@ namespace MonitorSwitcher
                     Settings.SelfPicked = true;
                     Settings.Save();
                     SelfChanged();
+                    FlashName();
                 };
                 selfItems.Add(selfItem);
                 selfMenu.DropDownItems.Add(selfItem);
@@ -2722,6 +3098,22 @@ namespace MonitorSwitcher
                 for (int i = 0; i < selfItems.Count; i++) selfItems[i].Checked = Config.Sources[i].Code == Settings.Self;
             };
             menu.Items.Add(selfMenu);
+
+            // The big "You're on AMD" after a switch to this PC. Turning it on shows it once.
+            Forms.ToolStripMenuItem nameItem = new Forms.ToolStripMenuItem();
+            nameItem.Click += delegate
+            {
+                Settings.NameOnSwitch = !Settings.NameOnSwitch;
+                Settings.Save();
+                if (Settings.NameOnSwitch) FlashName();
+            };
+            menu.Items.Add(nameItem);
+            menu.Opening += delegate
+            {
+                Source self = Config.Self;
+                nameItem.Text = "Show \u201CYou\u2019re on " + (self != null ? self.Name : "\u2026") + "\u201D after switching here";
+                nameItem.Checked = Settings.NameOnSwitch;
+            };
 
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("Quit", null, delegate { Application.Current.Shutdown(); });
