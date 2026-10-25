@@ -1,5 +1,7 @@
 # Project overview
 
+**2026-10-25 update:** Product name is now **ScreenShift**, approved by the owner and installed on the Nvidia PC. The app panel, tray, installer and shortcuts use the new name and logo. Internal `MonitorSwitcher` paths and identifiers remain compatible. Branding assets are in `assets/branding/`; see D23 and current status. Earlier setup and session details below are historical.
+
 ## What it is
 **Monitor Switcher** gives one-click input switching for a monitor shared by two Windows PCs. Each PC runs a small tray app with a widget **in the taskbar** that shows **both PCs' CPU, GPU and RAM use**. Click the other PC's tile (or press Ctrl+Alt+1 / 2) and the monitor changes input. Switching goes straight to the monitor over the video cable (DDC/CI). The usage numbers travel between the PCs over the home network. There's no extra hardware or third-party tool.
 

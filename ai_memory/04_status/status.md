@@ -1,4 +1,12 @@
-# Current status (last updated 2026-10-23, end of session 4)
+# Current status (last updated 2026-10-25)
+
+## ScreenShift branding installed
+
+The owner approved ScreenShift and requested implementation, local installation, commit and push. All visible app names, the panel header, tray tooltip/menu, setup messages and shortcuts now use ScreenShift. The approved blue/violet monitor-and-arrows logo has an icon-only variant and a nine-size Windows ICO, bundled inside the single-file installer and executable. The tray keeps a small identifying PC-color badge. Legacy app shortcuts migrate to ScreenShift; the executable/install path, settings and network identifiers remain compatible.
+
+Installed and verified on the **Nvidia PC** on 2026-10-25. Build, offscreen panel render, icon resources, Desktop/Start menu/Startup shortcuts, one running instance and preserved settings passed. The standalone script was tested from a temporary folder with no neighboring assets. `tests/Test-Branding.ps1` provides the repeatable build/resource/render check. The AMD PC needs the usual install/update command to receive this version. No monitor input was switched during validation.
+
+The following sections retain the earlier functional status from session 4.
 
 ## In one paragraph
 **Monitor Switcher** works. It's a small Windows tray app, built on each PC by one PowerShell script, that switches the Samsung Odyssey G91F between the **Nvidia** PC (DisplayPort, input 15) and the **AMD** PC (HDMI 1, input 17). The widget sits **inside the taskbar** and shows **CPU, GPU and RAM use for both PCs**, in one of four styles (the owner uses Graphs on the AMD PC). Session 4 made **the PC you're on obvious** (D22): each PC has its own color (Nvidia green, AMD maroon), this PC's tile gets an outline in that color and a solid name tag, the tray icon is filled with the PC's color, the panel marks "This PC", and after a switch to a PC a **small "You're on AMD" card with the maker's logo** slides into the top-right corner. The card went through three versions that night: big and centered (pushed, `6112bdd`), removed (pushed, `497ca04`), then back small, top right, with the logo. That last version is **installed on the AMD PC** and **pushed**.
@@ -37,3 +45,6 @@
 1. `git status` and `git log origin/main..main`: push what's waiting (ask first). Ask whether the Nvidia PC has the latest build and shows the NVIDIA logo on its card.
 2. Ask whether the colors, tag and card work for them. They changed their mind about the card once, so ask before removing or enlarging it.
 3. Then ask what to build next (`06_roadmap`). For any change to the script: compile check, offscreen preview, install from the checkout on the PC you're on (safe, doesn't switch inputs), and let the owner try switching. Ask before pushing.
+
+## Branding assets (2026-10-25)
+Approved logo, app symbol, Windows ICO and generation prompts are in `assets/branding/`.

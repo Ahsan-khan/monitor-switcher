@@ -1,5 +1,7 @@
 # Dev environment (the AMD PC, as of 2026-10-23, session 4)
 
+**2026-10-25:** Branding work and installation ran on the Nvidia PC, from the `monitor-switcher` Desktop checkout. Product/shortcut name is ScreenShift; the executable still lives at `%LOCALAPPDATA%\MonitorSwitcher\MonitorSwitcher.exe`. Use `Install ScreenShift.cmd` or the unchanged setup script. `powershell -NoProfile -ExecutionPolicy Bypass -File tests\Test-Branding.ps1` checks compilation, embedded artwork and offscreen rendering. Custom runtime test builds must embed the ICO as `ScreenShift.ico` (see the test's compiler options). Historical AMD environment details follow.
+
 | Tool | Status |
 |---|---|
 | Windows | 11 Home, build 26200 |

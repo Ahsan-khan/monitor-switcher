@@ -1,5 +1,7 @@
 # Architecture (as of 2026-10-23, end of session 4)
 
+**2026-10-25 branding update:** ScreenShift adds a `Brand` helper that loads the embedded `ScreenShift.ico` resource for the header and tray. The installer decodes its bundled ICO before compilation and supplies `/win32icon` and `/resource` to the compiler. `UpdateTrayIcon` disposes replaced icons; generated native icon handles are also released. ScreenShift shortcuts replace this app's legacy shortcuts. The launcher is now `Install ScreenShift.cmd`. Existing executable paths, settings and network behavior stay compatible. Line numbers below predate this update; use symbol search. Validate with `tests/Test-Branding.ps1`.
+
 ```
   Nvidia PC ──── DisplayPort (input 15) ────┐
       │                                     ├──► Samsung Odyssey G91F

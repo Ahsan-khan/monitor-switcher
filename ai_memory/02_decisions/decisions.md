@@ -118,3 +118,9 @@ Reasons marked *(inferred)* were worked out from the code and commits on 2026-10
 - The purple "on screen" bar no longer shows under this PC's tile (the tint says it already); it still shows under the other PC's tile when the monitor shows that PC, which you'd only see on a second screen.
 - Polling: the 2 s input poll now also runs while the card is turned on, even with the widget hidden, so it notices a switch back. Before, it only polled while a widget showed (D9).
 - **Why this set:** color is the fastest cue (green = Nvidia, maroon = AMD), the name answers the question outright, and the card catches the moment of confusion right after a switch. A permanent screen-corner label was considered and left out as too intrusive; the owner can ask for it.
+
+## D23. (2026-10-25) ScreenShift branding
+- The owner requested a cool name meaning monitor switcher and a logo, approved ScreenShift, then explicitly requested implementation, installation, commit and push.
+- Opposing blue/violet arrows inside a monitor, with a navy wordmark. Artwork and exact generation prompts are under `assets/branding/`. The app uses an icon-only version packaged at nine Windows sizes; the installer embeds the ICO as base64 so the existing download command still works on its own.
+- Rename visible UI and shortcuts to ScreenShift, while retaining the MonitorSwitcher executable/install folder, settings, mutex/event and MSW1 network identifiers. This preserves existing installations and communication with a PC that has not updated yet. Remove legacy shortcuts only when they target this app.
+- The tray uses the brand symbol with a small PC-color badge; per-PC widget colors and the arrival card's GPU-maker logos retain their existing purpose.
