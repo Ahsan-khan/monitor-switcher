@@ -24,4 +24,3 @@ Constraints: original design; no existing company logos, no NVIDIA or AMD motifs
 Built-in image generation edit using the approved logo above:
 
 Edit this approved ScreenShift logo into an icon-only application asset. Keep only the monitor symbol with the two opposing switching arrows, preserving its recognizable blue/violet colors and basic geometry. Remove all wordmark text completely. Center the symbol on a square transparent canvas with 8% padding around it. Refine into clean smooth flat vector-like shapes, crisp boundaries and clear negative space without rough specks or gaps. The two arrows point right and left within one monitor outline; short centered stand. No text, no background, no glow or shadow. This is the app icon variant of the same brand, not a redesign.
-
