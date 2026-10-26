@@ -3952,7 +3952,7 @@ Start-Process -FilePath $ExePath -ArgumentList "/show"
 Write-Host ""
 Write-Host "ScreenShift is running." -ForegroundColor Green
 Write-Host "  The widget sits in the taskbar, left of the clock. It shows each PC's CPU, GPU"
-Write-Host "  and RAM use. Click a PC to switch to it; right-click it for options."
+Write-Host "  RAM and VRAM use. Click a PC to switch to it; right-click it for options."
 Write-Host "  Ctrl+Alt+$($HotkeyLetter.ToUpper())        open the switcher (or click the monitor icon in the tray)"
 if ($DirectHotkeys) {
     for ($i = 0; $i -lt $Sources.Count; $i++) {
