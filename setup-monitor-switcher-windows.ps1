@@ -2,7 +2,7 @@
 # Right-click this file > "Run with PowerShell". Run it once on each Windows PC.
 #
 # It builds a small app on this PC that lives in the system tray:
-#   - A widget in the taskbar shows each PC's CPU, GPU and RAM use. Click a
+#   - A widget in the taskbar shows each PC's CPU, GPU, RAM and VRAM use. Click a
 #     PC to switch the monitor to it
 #   - Press Ctrl+Alt+M (or click the tray icon) for the switcher panel
 #   - Press Ctrl+Alt+1, 2... to jump straight to a source, even when the
@@ -559,13 +559,13 @@ namespace MonitorSwitcher
     // ------------------------------------------------------------ usage
     class Usage
     {
-        public int Cpu = -1, Gpu = -1, Ram = -1;   // percent; -1 = unknown
+        public int Cpu = -1, Gpu = -1, Ram = -1, Vram = -1;   // percent; -1 = unknown
         public DateTime At = DateTime.MinValue;    // when it was measured (UTC)
 
         public bool Fresh { get { return (DateTime.UtcNow - At).TotalSeconds < 5; } }
     }
 
-    // Measures this PC's CPU, GPU and RAM use the way Task Manager does.
+    // Measures this PC's CPU, GPU, RAM and VRAM use the way Task Manager does.
     static class Stats
     {
         [StructLayout(LayoutKind.Explicit, Size = 16)]
@@ -598,7 +598,8 @@ namespace MonitorSwitcher
 
         const uint AsDouble = 0x200 | 0x8000;   // PDH_FMT_DOUBLE | PDH_FMT_NOCAP100
         const uint MoreData = 0x800007D2;       // PDH_MORE_DATA
-        static IntPtr query, cpu, gpu;
+        static IntPtr query, cpu, gpu, vram;
+        static double vramTotal;
         static bool opened;
 
         static void Open()
@@ -616,6 +617,10 @@ namespace MonitorSwitcher
             // One instance per process and GPU engine. New processes are picked up by themselves.
             if (PdhAddEnglishCounter(query, @"\GPU Engine(*)\Utilization Percentage", IntPtr.Zero, out gpu) != 0)
                 gpu = IntPtr.Zero;
+            // Graphics card memory in use, one instance per GPU.
+            if (PdhAddEnglishCounter(query, @"\GPU Adapter Memory(*)\Dedicated Usage", IntPtr.Zero, out vram) != 0)
+                vram = IntPtr.Zero;
+            vramTotal = VramTotal();
             PdhCollectQueryData(query);
         }
 
@@ -630,6 +635,7 @@ namespace MonitorSwitcher
                 {
                     u.Cpu = ReadCpu();
                     u.Gpu = ReadGpu();
+                    u.Vram = ReadVram();
                 }
                 u.Ram = ReadRam();
             }
@@ -679,6 +685,60 @@ namespace MonitorSwitcher
             }
         }
 
+        // The fullest GPU's memory: the most used on any GPU, over the biggest GPU's size.
+        static int ReadVram()
+        {
+            uint size = 0, count;
+            if (vram == IntPtr.Zero || vramTotal <= 0 || PdhGetFormattedCounterArray(vram, AsDouble, ref size, out count, IntPtr.Zero) != MoreData || size == 0) return -1;
+            IntPtr buffer = Marshal.AllocHGlobal((int)size);
+            try
+            {
+                if (PdhGetFormattedCounterArray(vram, AsDouble, ref size, out count, buffer) != 0) return -1;
+                double most = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    IntPtr item = new IntPtr(buffer.ToInt64() + i * 24L);
+                    if ((uint)Marshal.ReadInt32(item, 8) > 1) continue;
+                    double v = BitConverter.Int64BitsToDouble(Marshal.ReadInt64(item, 16));
+                    if (v > most) most = v;
+                }
+                return Percent(100.0 * most / vramTotal);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        // The biggest graphics card's memory in bytes, from the driver's registry entries.
+        static double VramTotal()
+        {
+            double best = 0;
+            try
+            {
+                using (Microsoft.Win32.RegistryKey cls = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                    @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"))
+                {
+                    if (cls == null) return 0;
+                    foreach (string name in cls.GetSubKeyNames())
+                    {
+                        try
+                        {
+                            using (Microsoft.Win32.RegistryKey k = cls.OpenSubKey(name))
+                            {
+                                object v = k == null ? null : k.GetValue("HardwareInformation.qwMemorySize");
+                                double bytes = v is long ? (long)v : (v is byte[] && ((byte[])v).Length >= 8 ? BitConverter.ToInt64((byte[])v, 0) : 0);
+                                if (bytes > best) best = bytes;
+                            }
+                        }
+                        catch (Exception) { }
+                    }
+                }
+            }
+            catch (Exception) { }
+            return best;
+        }
+
         static int ReadRam()
         {
             MEMORYSTATUSEX m = new MEMORYSTATUSEX();
@@ -698,7 +758,8 @@ namespace MonitorSwitcher
     // Once a second each PC sends its usage over the local network (UDP port
     // 47815): a broadcast, so the other PC can find it, plus a direct copy to
     // every PC it has heard from. That way each widget can show both PCs.
-    // Message: "MSW1|<install id>|<input code of the sender>|<cpu>|<gpu>|<ram>"
+    // Message: "MSW1|<install id>|<input code of the sender>|<cpu>|<gpu>|<ram>|<vram>"
+    // (older builds leave out <vram>; both are read)
     static class Link
     {
         const int Port = 47815;
@@ -736,7 +797,7 @@ namespace MonitorSwitcher
                 {
                     IPEndPoint from = new IPEndPoint(IPAddress.Any, 0);
                     byte[] data = udp.Receive(ref from);
-                    if (data.Length <= 200) Handle(Encoding.ASCII.GetString(data), from);
+                    if (data.Length <= 220) Handle(Encoding.ASCII.GetString(data), from);
                 }
                 catch (ObjectDisposedException) { return; }
                 catch (Exception) { Thread.Sleep(250); }
@@ -746,11 +807,12 @@ namespace MonitorSwitcher
         static void Handle(string text, IPEndPoint from)
         {
             string[] f = text.Split('|');
-            if (f.Length != 6 || f[0] != "MSW1" || f[1].Length == 0 || f[1] == Settings.InstallId) return;
-            int code, cpu, gpu, ram;
+            if ((f.Length != 6 && f.Length != 7) || f[0] != "MSW1" || f[1].Length == 0 || f[1] == Settings.InstallId) return;
+            int code, cpu, gpu, ram, vram = -1;
             if (!int.TryParse(f[2], out code) || !int.TryParse(f[3], out cpu)
                 || !int.TryParse(f[4], out gpu) || !int.TryParse(f[5], out ram)) return;
-            Usage u = new Usage { Cpu = Bound(cpu), Gpu = Bound(gpu), Ram = Bound(ram), At = DateTime.UtcNow };
+            if (f.Length == 7 && !int.TryParse(f[6], out vram)) vram = -1;
+            Usage u = new Usage { Cpu = Bound(cpu), Gpu = Bound(gpu), Ram = Bound(ram), Vram = Bound(vram), At = DateTime.UtcNow };
             lock (Gate)
             {
                 if (peers.Count >= 16 && !peers.ContainsKey(f[1])) peers.Clear();
@@ -768,7 +830,7 @@ namespace MonitorSwitcher
         {
             if (udp == null) return;
             byte[] data = Encoding.ASCII.GetBytes("MSW1|" + Settings.InstallId + "|" + Settings.Self
-                + "|" + u.Cpu + "|" + u.Gpu + "|" + u.Ram);
+                + "|" + u.Cpu + "|" + u.Gpu + "|" + u.Ram + "|" + u.Vram);
             List<IPEndPoint> targets = new List<IPEndPoint>(Broadcasts());
             lock (Gate) targets.AddRange(peers.Values);
             foreach (IPEndPoint target in targets)
@@ -1110,7 +1172,8 @@ namespace MonitorSwitcher
 
         public static readonly string[] Styles = { "classic", "bars", "rings", "graphs" };
         public static readonly string[] StyleNames = { "Classic", "Bars", "Rings", "Graphs" };
-        protected static readonly string[] Labels = { "CPU", "GPU", "RAM" };
+        protected const int N = 4;   // CPU, GPU, RAM, VRAM
+        protected static readonly string[] Labels = { "CPU", "GPU", "RAM", "VRAM" };
 
         public static TileBody Create(string style, Source source, Color ink)
         {
@@ -1122,14 +1185,15 @@ namespace MonitorSwitcher
 
         protected static int[] Values(Usage u)
         {
-            return new int[] { u.Cpu, u.Gpu, u.Ram };
+            return new int[] { u.Cpu, u.Gpu, u.Ram, u.Vram };
         }
 
-        // CPU blue, GPU purple, RAM teal. Darker shades on a light taskbar.
+        // CPU blue, GPU purple, RAM teal, VRAM pink. Darker shades on a light taskbar.
         protected static Color MetricColor(int metric, bool light)
         {
             if (metric == 0) return light ? Color.FromRgb(0x25, 0x63, 0xEB) : Color.FromRgb(0x60, 0xA5, 0xFA);
             if (metric == 1) return light ? Color.FromRgb(0x93, 0x33, 0xEA) : Color.FromRgb(0xC0, 0x84, 0xFC);
+            if (metric == 3) return light ? Color.FromRgb(0xDB, 0x27, 0x77) : Color.FromRgb(0xF4, 0x72, 0xB6);
             return light ? Color.FromRgb(0x0D, 0x94, 0x88) : Color.FromRgb(0x2D, 0xD4, 0xBF);
         }
 
@@ -1161,11 +1225,11 @@ namespace MonitorSwitcher
         }
     }
 
-    // Classic: icon and name, then "CPU 23%  GPU 5%  RAM 61%".
+    // Classic: icon and name, then "CPU 23%  GPU 5%  RAM 61%  VRAM 96%".
     class ClassicBody : TileBody
     {
         readonly StackPanel numbers;
-        readonly TextBlock[] values = new TextBlock[3];
+        readonly TextBlock[] values = new TextBlock[N];
         readonly TextBlock note;
         readonly SolidColorBrush ink, hot;
 
@@ -1190,7 +1254,7 @@ namespace MonitorSwitcher
             // The numbers keep their space while a note covers them, so the tile never changes width.
             Grid lower = new Grid();
             numbers = new StackPanel { Orientation = Orientation.Horizontal };
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 TextBlock label = MakeText(Labels[i], 10, ink, 0.6, false);
                 label.Margin = new Thickness(i == 0 ? 0 : 7, 0, 3, 0);
@@ -1213,7 +1277,7 @@ namespace MonitorSwitcher
             note.Visibility = Visibility.Collapsed;
             numbers.Visibility = Visibility.Visible;
             int[] v = Values(u);
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 values[i].Text = Percent(v[i]);
                 values[i].Foreground = v[i] >= 90 ? hot : ink;
@@ -1228,14 +1292,14 @@ namespace MonitorSwitcher
         }
     }
 
-    // Bars: icon and name, then a small colored meter for each of CPU, GPU and RAM.
+    // Bars: icon and name, then a small colored meter for each of CPU, GPU, RAM and VRAM.
     class BarsBody : TileBody
     {
         const double BarWidth = 50;
         readonly Grid meters;
-        readonly Border[] fills = new Border[3];
-        readonly TextBlock[] values = new TextBlock[3];
-        readonly SolidColorBrush[] colors = new SolidColorBrush[3];
+        readonly Border[] fills = new Border[N];
+        readonly TextBlock[] values = new TextBlock[N];
+        readonly SolidColorBrush[] colors = new SolidColorBrush[N];
         readonly SolidColorBrush hot;
         readonly TextBlock note;
 
@@ -1254,10 +1318,10 @@ namespace MonitorSwitcher
 
             Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
             meters = new Grid();
-            meters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(23) });
+            meters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(27) });
             meters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(BarWidth) });
             meters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 meters.RowDefinitions.Add(new RowDefinition { Height = new GridLength(11.5) });
                 colors[i] = Paint(MetricColor(i, light), 255);
@@ -1296,7 +1360,7 @@ namespace MonitorSwitcher
             note.Visibility = Visibility.Collapsed;
             meters.Visibility = Visibility.Visible;
             int[] v = Values(u);
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 fills[i].Width = BarWidth * Math.Max(0, v[i]) / 100.0;
                 fills[i].Background = v[i] >= 90 ? hot : colors[i];
@@ -1312,17 +1376,17 @@ namespace MonitorSwitcher
         }
     }
 
-    // Rings: the name, then a ring gauge for each of CPU, GPU and RAM with the number inside.
+    // Rings: the name, then a ring gauge for each of CPU, GPU, RAM and VRAM with the number inside.
     class RingsBody : TileBody
     {
         const double RingSize = 24, RingWidth = 3;
         readonly StackPanel gauges;
-        readonly Shapes.Path[] arcs = new Shapes.Path[3];
-        readonly TextBlock[] values = new TextBlock[3];
-        readonly SolidColorBrush[] colors = new SolidColorBrush[3];
+        readonly Shapes.Path[] arcs = new Shapes.Path[N];
+        readonly TextBlock[] values = new TextBlock[N];
+        readonly SolidColorBrush[] colors = new SolidColorBrush[N];
         readonly SolidColorBrush hot;
         readonly TextBlock note;
-        readonly int[] shown = { -2, -2, -2 };
+        readonly int[] shown = { -2, -2, -2, -2 };
 
         public RingsBody(Source source, Color inkColor)
         {
@@ -1339,7 +1403,7 @@ namespace MonitorSwitcher
 
             Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
             gauges = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 3) };
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 colors[i] = Paint(MetricColor(i, light), 255);
                 StackPanel gauge = new StackPanel { Margin = new Thickness(i == 0 ? 0 : 6, 0, 0, 0) };
@@ -1373,7 +1437,7 @@ namespace MonitorSwitcher
             note.Visibility = Visibility.Collapsed;
             gauges.Visibility = Visibility.Visible;
             int[] v = Values(u);
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 if (v[i] == shown[i]) continue;
                 shown[i] = v[i];
@@ -1422,13 +1486,13 @@ namespace MonitorSwitcher
         const int Points = 40;
         const double W = 44, H = 19;
         readonly StackPanel cells;
-        readonly Shapes.Path[] areas = new Shapes.Path[3];
-        readonly Shapes.Path[] lines = new Shapes.Path[3];
-        readonly TextBlock[] values = new TextBlock[3];
-        readonly SolidColorBrush[] strokes = new SolidColorBrush[3];
-        readonly SolidColorBrush[] fillBrushes = new SolidColorBrush[3];
+        readonly Shapes.Path[] areas = new Shapes.Path[N];
+        readonly Shapes.Path[] lines = new Shapes.Path[N];
+        readonly TextBlock[] values = new TextBlock[N];
+        readonly SolidColorBrush[] strokes = new SolidColorBrush[N];
+        readonly SolidColorBrush[] fillBrushes = new SolidColorBrush[N];
         readonly SolidColorBrush ink, hotStroke, hotFill;
-        readonly List<int>[] history = { new List<int>(), new List<int>(), new List<int>() };
+        readonly List<int>[] history = { new List<int>(), new List<int>(), new List<int>(), new List<int>() };
         readonly TextBlock note;
         DateTime lastAt = DateTime.MinValue;
 
@@ -1448,7 +1512,7 @@ namespace MonitorSwitcher
 
             Grid area = new Grid { VerticalAlignment = VerticalAlignment.Center };
             cells = new StackPanel { Orientation = Orientation.Horizontal };
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 Color color = MetricColor(i, light);
                 strokes[i] = Paint(color, 255);
@@ -1492,7 +1556,7 @@ namespace MonitorSwitcher
             if (u.At == lastAt) return;   // the same reading again
             lastAt = u.At;
             int[] v = Values(u);
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < N; i++)
             {
                 history[i].Add(Math.Max(0, v[i]));
                 if (history[i].Count > Points) history[i].RemoveAt(0);
@@ -3898,7 +3962,7 @@ if ($DirectHotkeys) {
 Write-Host "  It starts by itself when you sign in. There's also a desktop icon."
 Write-Host ""
 Write-Host "If Windows asks whether ScreenShift may use your network, click Allow." -ForegroundColor Cyan
-Write-Host "The PCs share their CPU, GPU and RAM use over your home network, so set this up on both." -ForegroundColor Cyan
+Write-Host "The PCs share their CPU, GPU, RAM and VRAM use over your home network, so set this up on both." -ForegroundColor Cyan
 if ($here -and -not $guessed) {
     Write-Host "`nThis computer is '$($here.Name)' (it's on the monitor's $($here.Port) port)."
 } elseif ($here) {

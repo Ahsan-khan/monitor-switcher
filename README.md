@@ -15,7 +15,7 @@ On each PC, open PowerShell and run:
 $f="$env:TEMP\ms.ps1"; irm https://raw.githubusercontent.com/Ahsan-khan/monitor-switcher/main/setup-monitor-switcher-windows.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 ```
 
-- A widget in the taskbar, left of the clock, shows each PC's CPU, GPU and RAM use.
+- A widget in the taskbar, left of the clock, shows each PC's CPU, GPU, RAM and graphics memory (VRAM) use.
   Click a PC to switch to it. Right-click it for options, like moving it onto the desktop.
 - The PC you're on shows its name in its own color in the taskbar (Nvidia green, AMD maroon).
   After you switch to a PC, a small "You're on AMD" card with the AMD or NVIDIA logo

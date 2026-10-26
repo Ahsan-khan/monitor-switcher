@@ -77,3 +77,9 @@ The usage readings themselves take 1–3 ms a second; the rest of the CPU is red
 - It runs at startup and on every display change, unless the owner picked a PC in the menu (`SelfPicked=1`).
 - The setup runs `MonitorSwitcher.exe /whoami` (exit code = input code, or -1). Only if that fails and no `Self` is saved yet does it guess from what the monitor shows.
 - Why: the first version guessed from the screen, and saved the wrong PC when the setup ran while the monitor showed the other PC. That happened on 2026-10-23.
+
+## VRAM, the fourth metric (2026-10-26)
+- The owner asked for graphics card memory after the GPU tile read 3% while the RTX 5080's memory was 96% full (Ollama's `llama-server` held about 14 GB).
+- **VRAM:** `\GPU Adapter Memory(*)\Dedicated Usage` (one instance per GPU); the most used on any GPU, divided by the biggest card's size (`HardwareInformation.qwMemorySize` under the display adapter class key, read once at start). Checked on the Nvidia PC: 96% vs nvidia-smi 15667 / 16303 MiB.
+- Color pink (#F472B6 dark, #DB2777 light). All four styles loop over `TileBody.N` = 4; tiles are about a quarter wider.
+- Link message gained a 7th field, `|<vram>`. Older builds' 6-field messages are still read (VRAM shows "–"), but older builds drop 7-field messages, so **update both PCs**.
